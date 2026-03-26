@@ -1,0 +1,7 @@
+vercelsior
+vercelsior.exe
+dist/
+reports/
+test/fixtures/baseline/
+test/output*/
+!test/fixtures/.gitkeep
