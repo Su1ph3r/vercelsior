@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.1.0
+## v0.1.2
 
 ### New Checks
 - **fw-010** — WAF Rules in Detect-Only Mode: flags OWASP or managed rules set to detect/monitor-only
@@ -36,6 +36,6 @@
 - Added SSRF protection to `ProbeHeaders` via DNS resolution checks blocking private/reserved IPs
 - Route SSRF detection uses `net/url.Parse` for correct RFC 3986 handling including IPv6
 
-## v1.0.0
+## v0.1.1
 
 Initial release — Vercel security auditing tool with 130+ checks across 20 categories.

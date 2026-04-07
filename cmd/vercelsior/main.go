@@ -13,7 +13,7 @@ import (
 	"github.com/su1ph/vercelsior/internal/scanner"
 )
 
-const version = "1.1.0"
+const version = "0.1.2"
 
 var (
 	colorReset  = "\033[0m"
