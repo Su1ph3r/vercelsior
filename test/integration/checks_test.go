@@ -56,7 +56,7 @@ func setupFixtures(t *testing.T) (string, *client.Client) {
 		`{"drains":[]}`)
 
 	writeFixture(t, dir, "GET", base+"/v1/webhooks",
-		`[]`)
+		`[{"id":"hook_nosecret","url":"https://example.com/webhook","events":["deployment.created"]}]`)
 
 	writeFixture(t, dir, "GET", base+"/v1/edge-config",
 		`[]`)
@@ -73,10 +73,10 @@ func setupFixtures(t *testing.T) (string, *client.Client) {
 	writeFixture(t, dir, "GET", base+"/v7/certs",
 		`{"certs":[]}`)
 
-	writeFixture(t, dir, "GET", base+"/v1/bulk-redirects",
+	writeFixture(t, dir, "GET", base+"/v1/bulk-redirects?projectId=prj_001",
 		`{"redirects":[]}`)
 
-	writeFixture(t, dir, "GET", base+"/v1/sandboxes",
+	writeFixture(t, dir, "GET", base+"/v1/sandboxes?project=prj_001",
 		`{"sandboxes":[]}`)
 
 	// --- Paginated endpoints (client adds ?limit=100) ---
@@ -89,7 +89,7 @@ func setupFixtures(t *testing.T) (string, *client.Client) {
 
 	// Project env vars (paginated)
 	writeFixture(t, dir, "GET", base+"/v10/projects/prj_001/env?limit=100",
-		`{"envs":[{"id":"env_001","key":"NEXT_PUBLIC_SECRET_KEY","type":"plain","target":["production","preview","development"]},{"id":"env_002","key":"DATABASE_URL","type":"plain","target":["production","preview","development"],"value":"postgres://u:p@host/db"}],"pagination":{}}`)
+		`{"envs":[{"id":"env_001","key":"NEXT_PUBLIC_SECRET_KEY","type":"plain","target":["production","preview","development"]},{"id":"env_002","key":"DATABASE_URL","type":"plain","target":["production","preview","development"],"value":"postgres://u:p@host/db"},{"id":"env_003","key":"VITE_SECRET_KEY","value":"super-secret","type":"plain","target":["production"]}],"pagination":{}}`)
 
 	// Project domains (paginated)
 	writeFixture(t, dir, "GET", base+"/v9/projects/prj_001/domains?limit=100",
@@ -104,13 +104,24 @@ func setupFixtures(t *testing.T) (string, *client.Client) {
 		`{"deployments":[],"pagination":{}}`)
 	writeFixture(t, dir, "GET", base+"/v6/deployments?limit=100",
 		`{"deployments":[],"pagination":{}}`)
+	// ListDeploymentsLimit uses non-paginated single requests with varying limits
+	writeFixture(t, dir, "GET", base+"/v6/deployments?limit=1&projectId=prj_001",
+		`{"deployments":[],"pagination":{}}`)
+	writeFixture(t, dir, "GET", base+"/v6/deployments?limit=5&projectId=prj_001",
+		`{"deployments":[{"id":"dpl_001","name":"test-app","meta":{"framework":"nextjs","frameworkVersion":"15.1.3"}}],"pagination":{}}`)
+	writeFixture(t, dir, "GET", base+"/v6/deployments?limit=50",
+		`{"deployments":[],"pagination":{}}`)
 
 	// Domains (paginated)
 	writeFixture(t, dir, "GET", base+"/v5/domains?limit=100",
-		`{"domains":[],"pagination":{}}`)
+		`{"domains":[{"name":"example.com"}],"pagination":{}}`)
+
+	// DNS records for example.com (paginated) — dangling A record for sto-003
+	writeFixture(t, dir, "GET", base+"/v5/domains/example.com/records?limit=100",
+		`{"records":[{"id":"rec_dangling_a","type":"A","name":"orphan","value":"76.76.21.21"}],"pagination":{}}`)
 
 	// Integrations (paginated)
-	writeFixture(t, dir, "GET", base+"/v1/integrations/configurations?limit=100",
+	writeFixture(t, dir, "GET", base+"/v1/integrations/configurations?limit=100&view=account",
 		`{"configurations":[],"pagination":{}}`)
 
 	// Access groups (paginated)
@@ -123,11 +134,11 @@ func setupFixtures(t *testing.T) (string, *client.Client) {
 
 	// Feature flags (paginated)
 	writeFixture(t, dir, "GET", base+"/v1/projects/prj_001/feature-flags/flags?limit=100",
-		`{"flags":[],"pagination":{}}`)
+		`{"data":[],"pagination":{}}`)
 
 	// Project routes
 	writeFixture(t, dir, "GET", base+"/v1/projects/prj_001/routes",
-		`{"routes":[]}`)
+		`{"routes":[{"id":"route_ssrf","src":"/api/internal","dest":"http://169.254.169.254/latest/meta-data/"}]}`)
 
 	// Project members (paginated)
 	writeFixture(t, dir, "GET", base+"/v1/projects/prj_001/members?limit=100",
@@ -139,7 +150,7 @@ func setupFixtures(t *testing.T) (string, *client.Client) {
 
 	// Firewall config (uses projectId query param)
 	writeFixture(t, dir, "GET", base+"/v1/security/firewall/config/active?projectId=prj_001",
-		`{}`)
+		`{"firewallEnabled":true,"crs":{"sqli":{"enabled":true,"action":"log"},"xss":{"enabled":true,"action":"block"},"rce":{"enabled":true,"action":"block"},"lfi":{"enabled":true,"action":"block"},"rfi":{"enabled":true,"action":"block"},"gen":{"enabled":true,"action":"block"},"ma":{"enabled":true,"action":"block"},"sf":{"enabled":true,"action":"block"},"sd":{"enabled":true,"action":"block"},"php":{"enabled":true,"action":"block"},"java":{"enabled":true,"action":"block"}}}`)
 
 	// Firewall bypass
 	writeFixture(t, dir, "GET", base+"/v1/security/firewall/bypass?projectId=prj_001",
@@ -196,25 +207,35 @@ func TestExpectedFindings(t *testing.T) {
 	//   iam-001: token without expiry
 	//   iam-005: token with full access scope (empty scopes)
 	//   njs-001: NEXT_PUBLIC_SECRET_KEY
+	//   njs-002: outdated Next.js 15.1.3 with known CVEs
 	//   sec-001: DATABASE_URL stored as plain text (sensitive name)
 	//   sec-002: sensitive vars exposed to preview/development
+	//   sec-026: VITE_SECRET_KEY uses client-exposure prefix
 	//   dep-001: gitForkProtection = false
 	//   log-001: no log drains configured
-	//   log-010: no webhooks configured
+	//   log-024: webhook missing signing secret
+	//   fw-010: OWASP sqli rule in log mode instead of block
+	//   route-004: route destination points to metadata IP (SSRF)
+	//   sto-003: dangling A record pointing to Vercel IP
 	//   prev-001: no preview protection
 
 	mustFind := []struct {
 		id     string
 		status models.Status
 	}{
-		{"iam-001", models.Fail},  // token without expiry
-		{"iam-005", models.Warn},  // full access scope (empty scopes)
-		{"njs-001", models.Fail},  // NEXT_PUBLIC_SECRET_KEY
-		{"sec-001", models.Fail},  // plain text sensitive var (DATABASE_URL)
-		{"dep-001", models.Fail},  // fork protection disabled
-		{"log-001", models.Fail},  // no log drains
-		{"log-010", models.Warn},  // no webhooks
-		{"prev-001", models.Fail}, // no preview protection
+		{"iam-001", models.Fail},   // token without expiry
+		{"iam-005", models.Warn},   // full access scope (empty scopes)
+		{"njs-001", models.Fail},   // NEXT_PUBLIC_SECRET_KEY
+		{"njs-002", models.Fail},   // outdated Next.js with known CVEs
+		{"sec-001", models.Fail},   // plain text sensitive var (DATABASE_URL)
+		{"sec-026", models.Fail},   // VITE_SECRET_KEY client-exposed
+		{"dep-001", models.Fail},   // fork protection disabled
+		{"log-001", models.Fail},   // no log drains
+		{"log-024", models.Warn},   // webhook missing signing secret
+		{"fw-010", models.Warn},    // OWASP rule in detect-only mode
+		{"route-004", models.Fail}, // SSRF via internal destination
+		{"sto-003", models.Fail},   // dangling A record to Vercel IP
+		{"prev-001", models.Fail},  // no preview protection
 	}
 
 	for _, tc := range mustFind {

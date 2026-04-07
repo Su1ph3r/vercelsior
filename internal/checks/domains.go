@@ -28,6 +28,19 @@ func (dc *DomainChecks) checkDomains(c *client.Client) []models.Finding {
 
 	domains, err := c.ListDomains()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"dom-001", "Domain Check — Insufficient Permissions", catDomains,
+				"Cannot list domains: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "dom-001", Title: "Domain Check Failed", Category: catDomains,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list domains: %v", err),
+				ResourceType: "domain", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -157,8 +170,23 @@ func (dc *DomainChecks) checkProjectDomains(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"dom-010", "Project Domain Check — Insufficient Permissions", catDomains,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "dom-010", Title: "Project Domain Check Failed", Category: catDomains,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
@@ -166,6 +194,13 @@ func (dc *DomainChecks) checkProjectDomains(c *client.Client) []models.Finding {
 
 		domains, err := c.ListProjectDomains(projID)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListProjectDomains"] {
+				permSeen["ListProjectDomains"] = true
+				findings = append(findings, permissionFinding(
+					"dom-010", "Project Domain Check — Insufficient Permissions", catDomains,
+					"Cannot list project domains: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
 			continue
 		}
 
@@ -209,14 +244,36 @@ func (dc *DomainChecks) checkDNS(c *client.Client) []models.Finding {
 
 	domains, err := c.ListDomains()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"dom-020", "DNS Check — Insufficient Permissions", catDomains,
+				"Cannot list domains: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "dom-020", Title: "DNS Check Failed", Category: catDomains,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list domains: %v", err),
+				ResourceType: "domain", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeenDNS := make(map[string]bool)
 
 	for _, d := range domains {
 		name := str(d["name"])
 
 		records, err := c.ListDNSRecords(name)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeenDNS["ListDNSRecords"] {
+				permSeenDNS["ListDNSRecords"] = true
+				findings = append(findings, permissionFinding(
+					"dom-020", "DNS Records Check — Insufficient Permissions", catDomains,
+					"Cannot list DNS records: API token lacks required permissions. This check was skipped for all domains.",
+				))
+			}
 			continue
 		}
 

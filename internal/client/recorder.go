@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,11 +70,15 @@ func RequestKey(req *http.Request) string {
 func (t *RecordingTransport) saveResponse(filePath string, resp *http.Response) {
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
+		log.Printf("Warning: failed to read response body for recording: %v", err)
 		return
 	}
 	resp.Body = io.NopCloser(strings.NewReader(string(body)))
 
-	os.MkdirAll(filepath.Dir(filePath), 0755)
+	if err := os.MkdirAll(filepath.Dir(filePath), 0700); err != nil {
+		log.Printf("Warning: failed to create recording directory: %v", err)
+		return
+	}
 
 	rec := recordedResponse{
 		StatusCode: resp.StatusCode,
@@ -86,8 +91,14 @@ func (t *RecordingTransport) saveResponse(filePath string, resp *http.Response) 
 		}
 	}
 
-	data, _ := json.MarshalIndent(rec, "", "  ")
-	os.WriteFile(filePath, data, 0644)
+	data, err := json.MarshalIndent(rec, "", "  ")
+	if err != nil {
+		log.Printf("Warning: failed to marshal recording: %v", err)
+		return
+	}
+	if err := os.WriteFile(filePath, data, 0600); err != nil {
+		log.Printf("Warning: failed to write recording file %s: %v", filePath, err)
+	}
 }
 
 func (t *RecordingTransport) replayResponse(filePath string, req *http.Request) (*http.Response, error) {

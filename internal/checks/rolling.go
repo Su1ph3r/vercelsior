@@ -19,14 +19,23 @@ func (r *RollingReleaseChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "roll-001", Title: "Project Enumeration", Category: catRolling,
-			Severity: models.Info, Status: models.Error,
-			Description:  fmt.Sprintf("Failed to list projects: %v", err),
-			ResourceType: "project", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"roll-001", "Project Enumeration — Insufficient Permissions", catRolling,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "roll-001", Title: "Project Enumeration", Category: catRolling,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
@@ -34,6 +43,13 @@ func (r *RollingReleaseChecks) Run(c *client.Client) []models.Finding {
 
 		config, err := c.GetRollingReleaseConfig(projID)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["GetRollingReleaseConfig"] {
+				permSeen["GetRollingReleaseConfig"] = true
+				findings = append(findings, permissionFinding(
+					"rol-001", "Rolling Release Check — Insufficient Permissions", catRolling,
+					"Cannot read rolling release configuration: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
 			continue
 		}
 		if config == nil {

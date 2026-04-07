@@ -19,14 +19,23 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "chk-001", Title: "Project Enumeration", Category: catVerification,
-			Severity: models.Info, Status: models.Error,
-			Description:  fmt.Sprintf("Failed to list projects: %v", err),
-			ResourceType: "project", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"chk-001", "Project Enumeration — Insufficient Permissions", catVerification,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "chk-001", Title: "Project Enumeration", Category: catVerification,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
@@ -34,7 +43,17 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 
 		// Get the most recent deployment for chk-001
 		deployments, err := c.ListDeploymentsLimit(projID, 1)
-		if err != nil || len(deployments) == 0 {
+		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListDeploymentsLimit"] {
+				permSeen["ListDeploymentsLimit"] = true
+				findings = append(findings, permissionFinding(
+					"ver-001", "Deployment Verification Check — Insufficient Permissions", catVerification,
+					"Cannot list deployments: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
+			continue
+		}
+		if len(deployments) == 0 {
 			continue
 		}
 
@@ -46,6 +65,13 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 
 		latestChecks, err := c.ListDeploymentChecks(latestDeployID)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListDeploymentChecks"] {
+				permSeen["ListDeploymentChecks"] = true
+				findings = append(findings, permissionFinding(
+					"ver-001", "Deployment Checks — Insufficient Permissions", catVerification,
+					"Cannot list deployment checks: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
 			continue
 		}
 
@@ -71,7 +97,17 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 		// chk-002: Deployment Checks Always Passing
 		// Get recent 5 deployments and check if all checks always succeed
 		recentDeploys, err := c.ListDeploymentsLimit(projID, 5)
-		if err != nil || len(recentDeploys) == 0 {
+		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListDeploymentsLimit"] {
+				permSeen["ListDeploymentsLimit"] = true
+				findings = append(findings, permissionFinding(
+					"ver-001", "Deployment Verification Check — Insufficient Permissions", catVerification,
+					"Cannot list deployments: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
+			continue
+		}
+		if len(recentDeploys) == 0 {
 			continue
 		}
 
@@ -84,6 +120,13 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 			}
 			dChecks, err := c.ListDeploymentChecks(dID)
 			if err != nil {
+				if IsPermissionDenied(err) && !permSeen["ListDeploymentChecks"] {
+					permSeen["ListDeploymentChecks"] = true
+					findings = append(findings, permissionFinding(
+						"ver-001", "Deployment Checks — Insufficient Permissions", catVerification,
+						"Cannot list deployment checks: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
 				continue
 			}
 			for _, chk := range dChecks {
@@ -119,6 +162,7 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 			}
 			dChecks, err := c.ListDeploymentChecks(deployID)
 			if err != nil {
+				// permSeen already covers ListDeploymentChecks above
 				continue
 			}
 			for _, chk := range dChecks {

@@ -2,6 +2,7 @@ package checks
 
 import (
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/su1ph/vercelsior/internal/client"
@@ -9,6 +10,11 @@ import (
 )
 
 const catTakeover = "Subdomain Takeover"
+
+var vercelIPs = map[string]bool{
+	"76.76.21.21": true,
+	"76.76.21.98": true,
+}
 
 type TakeoverChecks struct{}
 
@@ -20,8 +26,17 @@ func (tc *TakeoverChecks) Run(c *client.Client) []models.Finding {
 
 	// Build a set of all project domains.
 	projectDomains := tc.collectProjectDomains(c)
+	if projectDomains == nil {
+		findings = append(findings, permissionFinding(
+			"sto-001", "Takeover Check — Insufficient Permissions",
+			catTakeover,
+			"Cannot list projects or their domains: API token may lack required permissions. Subdomain takeover checks were skipped to avoid false positives.",
+		))
+		return findings
+	}
 
 	findings = append(findings, tc.checkDanglingCNAME(c, projectDomains)...)
+	findings = append(findings, tc.checkDanglingARecord(c, projectDomains)...)
 	findings = append(findings, tc.checkOrphanedAliases(c, projectDomains)...)
 	return findings
 }
@@ -32,7 +47,8 @@ func (tc *TakeoverChecks) collectProjectDomains(c *client.Client) map[string]boo
 
 	projects, err := c.ListProjects()
 	if err != nil {
-		return set
+		log.Printf("Warning: failed to list projects for takeover check: %v", err)
+		return nil
 	}
 
 	for _, p := range projects {
@@ -62,8 +78,23 @@ func (tc *TakeoverChecks) checkDanglingCNAME(c *client.Client, projectDomains ma
 
 	domains, err := c.ListDomains()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"sto-001", "Dangling CNAME Check — Insufficient Permissions", catTakeover,
+				"Cannot list domains: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "sto-001", Title: "Takeover Check Failed", Category: catTakeover,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list domains: %v", err),
+				ResourceType: "domain", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, d := range domains {
 		domainName := str(d["name"])
@@ -73,6 +104,13 @@ func (tc *TakeoverChecks) checkDanglingCNAME(c *client.Client, projectDomains ma
 
 		records, err := c.ListDNSRecords(domainName)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListDNSRecords"] {
+				permSeen["ListDNSRecords"] = true
+				findings = append(findings, permissionFinding(
+					"sto-001", "Dangling CNAME Check — Insufficient Permissions", catTakeover,
+					"Cannot list DNS records: API token lacks required permissions. This check was skipped for all domains.",
+				))
+			}
 			continue
 		}
 
@@ -119,12 +157,117 @@ func (tc *TakeoverChecks) checkDanglingCNAME(c *client.Client, projectDomains ma
 	return findings
 }
 
+// checkDanglingARecord detects A records pointing to known Vercel IP addresses
+// where the domain is not claimed by any project (sto-003).
+func (tc *TakeoverChecks) checkDanglingARecord(c *client.Client, projectDomains map[string]bool) []models.Finding {
+	var findings []models.Finding
+
+	domains, err := c.ListDomains()
+	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"sto-003", "A Record Check — Insufficient Permissions", catTakeover,
+				"Cannot list domains: API token lacks required permissions. This check was skipped.",
+			))
+			return findings
+		}
+		findings = append(findings, models.Finding{
+			CheckID: "sto-003", Title: "A Record Check Failed", Category: catTakeover,
+			Severity: models.Info, Status: models.Error,
+			Description:  fmt.Sprintf("Failed to list domains: %v", err),
+			ResourceType: "domain", ResourceID: "N/A",
+		})
+		return findings
+	}
+	if len(domains) == 0 {
+		return findings
+	}
+
+	permSeenA := make(map[string]bool)
+
+	for _, d := range domains {
+		domainName := str(d["name"])
+		if domainName == "" {
+			continue
+		}
+
+		records, err := c.ListDNSRecords(domainName)
+		if err != nil {
+			if IsPermissionDenied(err) && !permSeenA["ListDNSRecords"] {
+				permSeenA["ListDNSRecords"] = true
+				findings = append(findings, permissionFinding(
+					"sto-003", "Dangling A Record Check — Insufficient Permissions", catTakeover,
+					"Cannot list DNS records: API token lacks required permissions. This check was skipped for all domains.",
+				))
+			}
+			continue
+		}
+
+		for _, r := range records {
+			recType := str(r["type"])
+			if recType != "A" && recType != "AAAA" {
+				continue
+			}
+
+			recValue := strings.TrimSuffix(str(r["value"]), ".")
+			if !vercelIPs[recValue] {
+				continue
+			}
+
+			recName := str(r["name"])
+			var fqdn string
+			if recName == "" || recName == "@" {
+				fqdn = strings.ToLower(domainName)
+			} else {
+				fqdn = strings.ToLower(recName + "." + domainName)
+			}
+
+			recID := str(r["id"])
+
+			if !projectDomains[fqdn] {
+				f := fail(
+					"sto-003", "Dangling A Record Pointing to Vercel", catTakeover,
+					models.Critical, 9.0,
+					"An A record points to a Vercel IP address but no project claims this domain. An attacker could add this domain to their own Vercel project and serve malicious content.",
+					fmt.Sprintf("Domain '%s' has an A record pointing to Vercel IP %s but is not configured in any project.", fqdn, recValue),
+					"dns_record", recID, fqdn,
+					"Either add the domain to the correct Vercel project or remove the DNS A record.",
+					map[string]string{"record_type": recType, "record_value": recValue, "fqdn": fqdn},
+				)
+				f.PocEvidence = []models.PocEvidence{buildEvidence(c, fmt.Sprintf("/v4/domains/%s/records", domainName), r, []string{"id", "type", "name", "value"}, fmt.Sprintf("A record for '%s' points to Vercel IP %s but no project claims this domain", fqdn, recValue))}
+				findings = append(findings, f)
+			} else {
+				findings = append(findings, pass(
+					"sto-003", "A Record to Vercel Claimed", catTakeover,
+					fmt.Sprintf("A record '%s' in domain '%s' points to Vercel IP %s and is claimed by a project.", recName, domainName, recValue),
+					"dns_record", recID, fqdn,
+				))
+			}
+		}
+	}
+
+	return findings
+}
+
 // checkOrphanedAliases detects aliases not linked to any active project domain (sto-002).
 func (tc *TakeoverChecks) checkOrphanedAliases(c *client.Client, projectDomains map[string]bool) []models.Finding {
 	var findings []models.Finding
 
 	aliases, err := c.ListAliases()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"sto-002", "Orphaned Alias Check — Insufficient Permissions", catTakeover,
+				"Cannot list aliases: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "sto-002", Title: "Orphaned Alias Check Failed", Category: catTakeover,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list aliases: %v", err),
+				ResourceType: "alias", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 

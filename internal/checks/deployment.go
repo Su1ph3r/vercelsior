@@ -20,6 +20,19 @@ func (dc *DeploymentChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"dep-001", "Deployment Check — Insufficient Permissions", catDeployment,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "dep-001", Title: "Deployment Check Failed", Category: catDeployment,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -176,10 +189,10 @@ func (dc *DeploymentChecks) Run(c *client.Client) []models.Finding {
 		// Check: OIDC token config
 		oidcConfig := mapVal(p["oidcTokenConfig"])
 		if oidcConfig != nil {
-			if !boolean(oidcConfig["enabled"]) {
+			if boolean(oidcConfig["enabled"]) {
 				findings = append(findings, pass(
 					"dep-009", "OIDC Token Config", catDeployment,
-					fmt.Sprintf("Project '%s' has OIDC token configuration present.", projName),
+					fmt.Sprintf("Project '%s' has OIDC token federation enabled.", projName),
 					"project", projID, projName,
 				))
 			}
@@ -287,8 +300,15 @@ func (dc *DeploymentChecks) Run(c *client.Client) []models.Finding {
 	}
 
 	// Check recent deployments for public access
-	deployments, err := c.ListDeployments("", 50)
-	if err == nil {
+	deployments, err := c.ListDeploymentsLimit("", 50)
+	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"dep-020", "Deployment Visibility Check — Insufficient Permissions", catDeployment,
+				"Cannot list recent deployments: API token lacks required permissions. This check was skipped.",
+			))
+		}
+	} else {
 		publicCount := 0
 		for _, d := range deployments {
 			visibility := str(d["visibility"])

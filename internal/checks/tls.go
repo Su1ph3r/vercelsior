@@ -21,12 +21,19 @@ func (t *TLSChecks) Run(c *client.Client) []models.Finding {
 
 	certs, err := c.ListCertificates()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "tls-001", Title: "Certificate Enumeration", Category: catTLS,
-			Severity: models.Info, Status: models.Error,
-			Description:  fmt.Sprintf("Failed to list certificates: %v", err),
-			ResourceType: "certificate", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"tls-001", "Certificate Enumeration — Insufficient Permissions", catTLS,
+				"Cannot list certificates: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "tls-001", Title: "Certificate Enumeration", Category: catTLS,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list certificates: %v", err),
+				ResourceType: "certificate", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -163,7 +170,15 @@ func (t *TLSChecks) Run(c *client.Client) []models.Finding {
 
 	// Check: mTLS for backend connections (Enterprise/Secure Compute feature)
 	projects, projErr := c.ListProjects()
-	if projErr == nil {
+	if projErr != nil {
+		if IsPermissionDenied(projErr) {
+			findings = append(findings, permissionFinding(
+				"tls-010", "mTLS Check — Insufficient Permissions", catTLS,
+				"Cannot list projects for mTLS check: API token lacks required permissions. This check was skipped.",
+			))
+		}
+	} else {
+		permSeenTLS := make(map[string]bool)
 		for _, p := range projects {
 			projID := str(p["id"])
 			projName := str(p["name"])
@@ -183,6 +198,13 @@ func (t *TLSChecks) Run(c *client.Client) []models.Finding {
 			if !hasMTLS {
 				envVars, envErr := c.ListProjectEnvVars(projID)
 				if envErr != nil {
+					if IsPermissionDenied(envErr) && !permSeenTLS["ListProjectEnvVars"] {
+						permSeenTLS["ListProjectEnvVars"] = true
+						findings = append(findings, permissionFinding(
+							"tls-010", "mTLS Env Var Check — Insufficient Permissions", catTLS,
+							"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+						))
+					}
 					continue
 				}
 				hasBackend := false

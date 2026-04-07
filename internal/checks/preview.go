@@ -20,10 +20,24 @@ func (pc *PreviewChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"prev-001", "Preview Check — Insufficient Permissions", catPreview,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "prev-001", Title: "Preview Check Failed", Category: catPreview,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
 	dangerousPatterns := []string{"curl", "wget", "eval", "bash -c", "sh -c", "|", ">", "$(", "`"}
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
@@ -112,6 +126,15 @@ func (pc *PreviewChecks) Run(c *client.Client) []models.Finding {
 
 		// Check: VERCEL_AUTOMATION_BYPASS_SECRET in env vars
 		envVars, envErr := c.ListProjectEnvVars(projID)
+		if envErr != nil {
+			if IsPermissionDenied(envErr) && !permSeen["ListProjectEnvVars"] {
+				permSeen["ListProjectEnvVars"] = true
+				findings = append(findings, permissionFinding(
+					"prev-001", "Preview Env Var Check — Insufficient Permissions", catPreview,
+					"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
+		}
 		if envErr == nil {
 			for _, env := range envVars {
 				envKey := str(env["key"])

@@ -50,6 +50,15 @@ var remediationKB = map[string]RemediationEntry{
 			{Title: "Vercel Firewall API", URL: "https://vercel.com/docs/security/vercel-firewall/vercel-waf", Type: "documentation"},
 		},
 	},
+	"fw-010": {
+		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v1/security/firewall/config/active?projectId={project_id}" | jq '.crs'`,
+		RemediationCommands: []models.RemediationCommand{
+			{Type: "console", Command: "In Vercel Dashboard > Project > Settings > Firewall, change OWASP rule action from 'Log' to 'Block'", Description: "Switch OWASP rules to block mode"},
+		},
+		RemediationResources: []models.RemediationResource{
+			{Title: "Vercel WAF Managed Rulesets", URL: "https://vercel.com/docs/security/vercel-waf/managed-rulesets", Type: "documentation"},
+		},
+	},
 	"fw-002": {
 		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v1/security/firewall/config/active?projectId={project_id}" | jq '.firewallEnabled'`,
 		RemediationCommands: []models.RemediationCommand{
@@ -79,6 +88,16 @@ var remediationKB = map[string]RemediationEntry{
 		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v1/env" | jq '.data[] | select(.target | length == 3) | {key, target}'`,
 		RemediationResources: []models.RemediationResource{
 			{Title: "Environment Variable Best Practices", URL: "https://vercel.com/docs/projects/environment-variables", Type: "documentation"},
+		},
+	},
+	"sec-026": {
+		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v10/projects/{project_id}/env" | jq '.envs[] | select(.key | test("^(VITE_|GATSBY_|REACT_APP_|NUXT_PUBLIC_)")) | {key, target, type}'`,
+		RemediationCommands: []models.RemediationCommand{
+			{Type: "console", Command: "Remove the client-exposure prefix from the env var name or use a server-only variable", Description: "Prevent client-side exposure of sensitive values"},
+		},
+		RemediationResources: []models.RemediationResource{
+			{Title: "Vercel Environment Variables", URL: "https://vercel.com/docs/environment-variables", Type: "documentation"},
+			{Title: "Next.js Environment Variables", URL: "https://nextjs.org/docs/app/building-your-application/configuring/environment-variables", Type: "documentation"},
 		},
 	},
 	"njs-001": {
@@ -127,6 +146,16 @@ var remediationKB = map[string]RemediationEntry{
 			{Title: "Vercel Webhooks", URL: "https://vercel.com/docs/observability/webhooks", Type: "documentation"},
 		},
 	},
+	"log-024": {
+		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" https://api.vercel.com/v1/webhooks | jq '.[] | select(.secret == null or .secret == "") | {id, url}'`,
+		RemediationCommands: []models.RemediationCommand{
+			{Type: "console", Command: "Update webhook configuration in Vercel Dashboard > Settings > Webhooks to include a signing secret", Description: "Add a signing secret to the webhook"},
+		},
+		RemediationResources: []models.RemediationResource{
+			{Title: "Vercel Webhooks", URL: "https://vercel.com/docs/webhooks", Type: "documentation"},
+			{Title: "Securing Webhooks", URL: "https://vercel.com/docs/webhooks#securing-webhooks", Type: "documentation"},
+		},
+	},
 	"dom-001": {
 		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v5/domains/{domain}" | jq '{verified, name}'`,
 		RemediationResources: []models.RemediationResource{
@@ -145,10 +174,30 @@ var remediationKB = map[string]RemediationEntry{
 			{Title: "DMARC Record Setup", URL: "https://www.cloudflare.com/learning/dns/dns-records/dns-dmarc-record/", Type: "guide"},
 		},
 	},
+	"sto-003": {
+		PocVerification: `dig +short {domain} A | grep -E "76\.76\.21\.(21|98)"`,
+		RemediationCommands: []models.RemediationCommand{
+			{Type: "console", Command: "Add the domain to your Vercel project or remove the A record from DNS", Description: "Prevent subdomain takeover via dangling A record"},
+		},
+		RemediationResources: []models.RemediationResource{
+			{Title: "Vercel Custom Domains", URL: "https://vercel.com/docs/projects/domains", Type: "documentation"},
+			{Title: "Subdomain Takeover Prevention", URL: "https://vercel.com/docs/security", Type: "documentation"},
+		},
+	},
 	"sto-001": {
 		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v5/domains/{domain}/records" | jq '.records[] | select(.type == "CNAME" and (.value | contains("vercel")))'`,
 		RemediationResources: []models.RemediationResource{
 			{Title: "Subdomain Takeover Prevention", URL: "https://vercel.com/docs/projects/domains", Type: "documentation"},
+		},
+	},
+	"route-004": {
+		PocVerification: `curl -s -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com/v1/projects/{project_id}/routes" | jq '.routes[] | select(.dest | test("(localhost|127\\.0\\.0\\.1|169\\.254|10\\.|172\\.(1[6-9]|2[0-9]|3[01])|192\\.168)")) | {src, dest}'`,
+		RemediationCommands: []models.RemediationCommand{
+			{Type: "console", Command: "Remove or update the rewrite/redirect destination to use a public endpoint. For internal backends, use Vercel Secure Compute.", Description: "Eliminate SSRF risk from route configuration"},
+		},
+		RemediationResources: []models.RemediationResource{
+			{Title: "Vercel Rewrites", URL: "https://vercel.com/docs/edge-network/rewrites", Type: "documentation"},
+			{Title: "Vercel Secure Compute", URL: "https://vercel.com/docs/security/secure-compute", Type: "documentation"},
 		},
 	},
 	"hdr-001": {
@@ -188,9 +237,15 @@ func EnrichFinding(f *models.Finding) {
 		return
 	}
 
-	// Build replacer from finding fields
+	// Use project ID from Details if available (env-var-scoped findings store
+	// the env var ID in ResourceID, not the project ID).
+	projectID := f.ResourceID
+	if pid, ok := f.Details["project_id"]; ok && pid != "" {
+		projectID = pid
+	}
+
 	replacer := strings.NewReplacer(
-		"{project_id}", f.ResourceID,
+		"{project_id}", projectID,
 		"{team_id}", f.ResourceID,
 		"{token_id}", f.ResourceID,
 		"{domain}", f.ResourceName,

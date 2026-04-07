@@ -10,13 +10,18 @@ Single binary. Zero dependencies. Linux, macOS, Windows.
 
 ## What It Finds
 
-**130+ security checks** across **20 categories**:
+**140+ security checks** across **20 categories**:
 
 - Leaked API tokens, tokens without expiration, overprivileged scopes
 - Disabled WAF/firewall, missing OWASP rules, no rate limiting
 - `NEXT_PUBLIC_` environment variables leaking secrets into client-side JavaScript
 - Sensitive credentials stored as plain text or exposed to preview environments
-- Next.js deployments running versions with known CVEs (CVE-2025-29927, CVE-2025-55182)
+- Next.js deployments running versions with known CVEs (CVE-2025-29927, CVE-2025-55182, CVE-2025-49826, CVE-2025-59471, CVE-2025-59472)
+- SSRF detection in rewrite/redirect destinations pointing to internal IPs or cloud metadata
+- Client-exposed secrets via framework prefixes (VITE_, GATSBY_, REACT_APP_, NUXT_PUBLIC_)
+- WAF rules in detect-only mode providing no active protection
+- Dangling A records pointing to Vercel IPs enabling subdomain takeover
+- Webhook endpoints missing signing secrets
 - Subdomain takeover risks from dangling CNAMEs and orphaned aliases
 - Missing deployment protection, unprotected preview URLs, disabled fork protection
 - No log drains, no webhooks, no security event monitoring
@@ -91,7 +96,7 @@ Create a token at **Vercel Dashboard > Settings > Tokens** with:
 - **Read** access to all resources
 - **Team** scope if scanning a team
 
-Vercelsior never writes to or modifies your Vercel configuration. If the token lacks permissions for certain endpoints, those checks are skipped gracefully and a summary of skipped endpoints is printed.
+Vercelsior never writes to or modifies your Vercel configuration. If the token lacks permissions for certain endpoints, those checks produce explicit permission-denied findings in the report and a summary of skipped endpoints is printed.
 
 ---
 
@@ -190,20 +195,20 @@ CLI flags override config file values.
 | Category | Checks | Description |
 |----------|--------|-------------|
 | Identity & Access Management | 13 | API tokens, SSO/SAML, team roles, access groups |
-| Firewall & WAF | 10+ | OWASP CRS, managed rules, bot protection, rate limiting, IP rules |
-| Secrets & Environment Variables | 10 | Plain text detection, NEXT_PUBLIC_ leaks, entropy analysis, cross-env exposure |
+| Firewall & WAF | 11+ | OWASP CRS, managed rules, bot protection, rate limiting, IP rules, detect-only mode |
+| Secrets & Environment Variables | 11 | Plain text detection, NEXT_PUBLIC_ leaks, client-exposure prefixes, entropy analysis, cross-env exposure |
 | Deployment Protection | 12 | Fork protection, sourcemaps, deployment gates, Node.js version, CORS |
 | Domains & Certificates | 12 | Verification, expiry, DNS hygiene, SPF/DMARC/CAA/DNSSEC, transfer lock |
-| Logging & Monitoring | 8 | Log drains, webhooks, security event coverage, audit events |
+| Logging & Monitoring | 9 | Log drains, webhooks, webhook signing, security event coverage, audit events |
 | Integrations | 6 | Permission scope, staleness, project-level access |
 | Infrastructure | 8 | Secure Compute, Edge Config, remote caching, static IPs |
 | Preview & Build Security | 6 | Preview protection, build command injection, deploy hooks, bypass secrets |
 | Framework Security | 3 | NEXT_PUBLIC_ secrets, Next.js CVE detection, framework identification |
-| Subdomain Takeover | 2 | Dangling CNAME detection, orphaned alias detection |
+| Subdomain Takeover | 3 | Dangling CNAME detection, dangling A record detection, orphaned alias detection |
 | Git & Source Control | 3 | Personal vs organization repos, protected scopes, branch filtering |
 | Feature Flags | 2 | Security-sensitive flag names, production overrides |
 | Certificates & TLS | 3 | Certificate expiry, weak key algorithms, mTLS |
-| Routes & Redirects | 3 | Open redirects, external origin proxying, wildcard routes |
+| Routes & Redirects | 4 | Open redirects, external origin proxying, wildcard routes, SSRF detection |
 | Security Headers | 6 | CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy |
 | Storage & Data | 3 | Vercel KV/Postgres/Blob access controls, cron job protection |
 | Rolling Releases | 2 | Approval gates, monitoring verification |

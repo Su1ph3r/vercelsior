@@ -30,6 +30,19 @@ func (ic *InfrastructureChecks) checkSecureCompute(c *client.Client) []models.Fi
 
 	networks, err := c.ListSecureComputeNetworks()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"infra-001", "Secure Compute Check — Insufficient Permissions", catInfra,
+				"Cannot list secure compute networks: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "infra-001", Title: "Secure Compute Check Failed", Category: catInfra,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list secure compute networks: %v", err),
+				ResourceType: "network", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -94,8 +107,23 @@ func (ic *InfrastructureChecks) checkEdgeConfig(c *client.Client) []models.Findi
 
 	configs, err := c.ListEdgeConfigs()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"infra-010", "Edge Config Check — Insufficient Permissions", catInfra,
+				"Cannot list edge configs: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "infra-010", Title: "Edge Config Check Failed", Category: catInfra,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list edge configs: %v", err),
+				ResourceType: "edge_config", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, ec := range configs {
 		ecID := str(ec["id"])
@@ -107,6 +135,13 @@ func (ic *InfrastructureChecks) checkEdgeConfig(c *client.Client) []models.Findi
 		// Check tokens for this edge config
 		tokens, err := c.ListEdgeConfigTokens(ecID)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListEdgeConfigTokens"] {
+				permSeen["ListEdgeConfigTokens"] = true
+				findings = append(findings, permissionFinding(
+					"inf-005", "Edge Config Token Check — Insufficient Permissions", catInfra,
+					"Cannot list edge config tokens: API token lacks required permissions. This check was skipped for all edge configs.",
+				))
+			}
 			continue
 		}
 
@@ -158,7 +193,16 @@ func (ic *InfrastructureChecks) checkRemoteCaching(c *client.Client) []models.Fi
 	var findings []models.Finding
 
 	status, err := c.GetArtifactsStatus()
-	if err != nil || status == nil {
+	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"inf-020", "Remote Caching Check — Insufficient Permissions", catInfra,
+				"Cannot check artifacts status: API token lacks required permissions. This check was skipped.",
+			))
+		}
+		return findings
+	}
+	if status == nil {
 		return findings
 	}
 
@@ -184,6 +228,19 @@ func (ic *InfrastructureChecks) checkAliases(c *client.Client) []models.Finding 
 
 	aliases, err := c.ListAliases()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"infra-030", "Alias Check — Insufficient Permissions", catInfra,
+				"Cannot list aliases: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "infra-030", Title: "Alias Check Failed", Category: catInfra,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list aliases: %v", err),
+				ResourceType: "alias", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -214,8 +271,23 @@ func (ic *InfrastructureChecks) checkStaticIPs(c *client.Client) []models.Findin
 	var findings []models.Finding
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"infra-040", "Static IP Check — Insufficient Permissions", catInfra,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "infra-040", Title: "Static IP Check Failed", Category: catInfra,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+	permSeenStatic := make(map[string]bool)
+
 	for _, p := range projects {
 		projID := str(p["id"])
 		projName := str(p["name"])
@@ -225,6 +297,13 @@ func (ic *InfrastructureChecks) checkStaticIPs(c *client.Client) []models.Findin
 			// Simple heuristic: if project has env vars suggesting backend connections, flag it
 			envVars, err := c.ListProjectEnvVars(projID)
 			if err != nil {
+				if IsPermissionDenied(err) && !permSeenStatic["ListProjectEnvVars"] {
+					permSeenStatic["ListProjectEnvVars"] = true
+					findings = append(findings, permissionFinding(
+						"inf-030", "Static IP Check — Insufficient Permissions", catInfra,
+						"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
 				continue
 			}
 			hasBackendURL := false

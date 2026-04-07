@@ -19,21 +19,40 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "fw-001", Title: "Project Enumeration", Category: catFirewall,
-			Severity: models.Info, Status: models.Error,
-			Description: fmt.Sprintf("Failed to list projects: %v", err),
-			ResourceType: "project", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"fw-001", "Project Enumeration — Insufficient Permissions", catFirewall,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "fw-001", Title: "Project Enumeration", Category: catFirewall,
+				Severity: models.Info, Status: models.Error,
+				Description: fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
 		projName := str(p["name"])
 
 		fwConfig, err := c.GetFirewallConfig(projID)
-		if err != nil || fwConfig == nil {
+		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["GetFirewallConfig"] {
+				permSeen["GetFirewallConfig"] = true
+				findings = append(findings, permissionFinding(
+					"fw-001", "Firewall Check — Insufficient Permissions", catFirewall,
+					"Cannot read firewall configuration: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
+			continue
+		}
+		if fwConfig == nil {
 			f := fail(
 				"fw-001", "Firewall Not Configured", catFirewall, models.High,
 				8.0, "No WAF means all application traffic is uninspected. Common web attacks (SQLi, XSS) have no mitigation layer.",
@@ -109,6 +128,32 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 						"project", projID, projName,
 						fmt.Sprintf("Enable OWASP %s rules in the firewall CRS configuration.", cat.name),
 						map[string]string{"rule_category": cat.key},
+					))
+				}
+			}
+
+			// fw-010: Check if enabled OWASP rules are in block mode
+			for _, cat := range owaspCategories {
+				rule := mapVal(crs[cat.key])
+				if rule == nil || !boolean(rule["enabled"]) {
+					continue // already flagged by fw-003
+				}
+				action := str(rule["action"])
+				if action == "" {
+					action = str(rule["mode"]) // fallback field name
+				}
+				if action != "block" {
+					if action == "" {
+						action = "unknown"
+					}
+					findings = append(findings, warn(
+						"fw-010", "OWASP Rule in Detect-Only Mode", catFirewall,
+						models.Medium, 5.0,
+						"OWASP rules in detect or log mode provide visibility but do not block malicious requests. Attackers can still exploit vulnerabilities that the rules are designed to prevent.",
+						fmt.Sprintf("Project '%s': OWASP %s rules are enabled but in '%s' mode instead of 'block'.", projName, cat.name, action),
+						"project", projID, projName,
+						"Change the OWASP rule action from detect/log to block for active protection.",
+						map[string]string{"rule_category": cat.key, "current_action": action},
 					))
 				}
 			}
@@ -235,7 +280,16 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 		}
 
 		// Check: bypass rules
-		bypass, _ := c.GetFirewallBypass(projID)
+		bypass, bypassErr := c.GetFirewallBypass(projID)
+		if bypassErr != nil {
+			if IsPermissionDenied(bypassErr) && !permSeen["GetFirewallBypass"] {
+				permSeen["GetFirewallBypass"] = true
+				findings = append(findings, permissionFinding(
+					"fw-020", "Firewall Bypass Check — Insufficient Permissions", catFirewall,
+					"Cannot read firewall bypass rules: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
+		}
 		if bypass != nil {
 			if rules, ok := bypass["rules"].([]interface{}); ok && len(rules) > 0 {
 				findings = append(findings, warn(

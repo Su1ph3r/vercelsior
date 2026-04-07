@@ -42,6 +42,7 @@ Complete reference of all security checks performed by vercelsior.
 | fw-007 | Bot Identification Disabled | WARN | MEDIUM | 4.0 | Bot identification not enabled. |
 | fw-008 | Firewall Bypass Rules Active | WARN | HIGH | 7.0 | Active bypass rules create holes in WAF coverage. |
 | fw-009 | No Rate Limiting Rules | WARN | MEDIUM | 5.0 | No rate limiting rules configured in the WAF. |
+| fw-010 | WAF Rules in Detect-Only Mode | WARN | HIGH | 7.0 | OWASP or managed rules set to detect-only provide no active protection. |
 
 ## Secrets & Environment Variables
 
@@ -57,6 +58,7 @@ Complete reference of all security checks performed by vercelsior.
 | sec-021 | Sensitive Env Var Without Branch Filtering | WARN | MEDIUM | 6.0 | Sensitive variable available on all preview branches. |
 | sec-022 | Excessive Environment Variables | WARN | LOW | 3.0 | Project has more than 50 environment variables. |
 | sec-023 | High-Entropy Plain Text Value | WARN | MEDIUM | 5.0 | Plain text variable with high entropy suggesting undeclared secret. |
+| sec-026 | Client-Exposed Sensitive Environment Variable | FAIL | CRITICAL | 10.0 | Framework prefix (VITE_, GATSBY_, REACT_APP_, NUXT_PUBLIC_) exposes sensitive variable to client-side JavaScript. |
 
 ## Deployment Protection
 
@@ -112,6 +114,7 @@ Complete reference of all security checks performed by vercelsior.
 | log-011 | Webhook Using HTTP | FAIL | HIGH | 8.0 | Webhook sends events over unencrypted HTTP. |
 | log-012 | Missing Security Event Webhooks | WARN | MEDIUM | 4.0 | Security-relevant events not covered by webhooks. |
 | log-022 | No Audit Event Monitoring | WARN | MEDIUM | 6.0 | No webhooks for audit-relevant events. |
+| log-024 | Webhook Missing Signing Secret | WARN | HIGH | 7.0 | Webhook endpoint has no signing secret configured, allowing forged payloads. |
 
 ## Integrations
 
@@ -154,7 +157,7 @@ Complete reference of all security checks performed by vercelsior.
 | Check ID | Title | Status | Severity | Risk Score | Description |
 |----------|-------|--------|----------|------------|-------------|
 | njs-001 | NEXT_PUBLIC_ Env Var With Sensitive Name | FAIL | CRITICAL | 10.0 | Sensitive values exposed in client-side JavaScript bundles. |
-| njs-002 | Outdated Next.js Version With Known CVEs | FAIL | CRITICAL | 9.0 | Next.js version with known critical CVEs (CVE-2025-29927, etc.). |
+| njs-002 | Outdated Next.js Version With Known CVEs | FAIL | CRITICAL | 10.0 | Next.js version with known CVEs (CVE-2025-29927, CVE-2025-55182, CVE-2025-49826, CVE-2025-59471, CVE-2025-59472). |
 | njs-003 | Framework Not Set | WARN | MEDIUM | 4.0 | No framework configured, missing platform protections. |
 
 ## Subdomain Takeover
@@ -163,6 +166,7 @@ Complete reference of all security checks performed by vercelsior.
 |----------|-------|--------|----------|------------|-------------|
 | sto-001 | Dangling CNAME to Vercel | FAIL | CRITICAL | 9.0 | DNS CNAME pointing to Vercel without a matching project domain. |
 | sto-002 | Orphaned Alias | WARN | HIGH | 7.0 | Alias not linked to any active project domain. |
+| sto-003 | Dangling A Record Pointing to Vercel | FAIL | CRITICAL | 9.0 | A record points to Vercel IP without a matching project domain. |
 
 ## Git & Source Control
 
@@ -194,6 +198,7 @@ Complete reference of all security checks performed by vercelsior.
 | route-001 | Open Redirect in Bulk Redirects | FAIL | HIGH | 8.0 | Bulk redirect may enable open redirect attacks. |
 | route-002 | Wildcard Route Proxying to External Origin | FAIL | HIGH | 7.0 | Wildcard route proxies traffic to external destination. |
 | route-003 | Rewrite Proxying to External Origin | WARN | MEDIUM | 6.0 | Route rewrites to external origin. |
+| route-004 | Rewrite Destination Points to Internal Target | FAIL | HIGH | 8.0 | Route destination points to internal IP, localhost, or cloud metadata endpoint (SSRF). |
 
 ## Security Headers
 

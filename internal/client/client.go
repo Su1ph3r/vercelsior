@@ -1,10 +1,13 @@
 package client
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -12,6 +15,9 @@ import (
 	"sync"
 	"time"
 )
+
+// ErrPermissionDenied is returned when the API returns HTTP 403.
+var ErrPermissionDenied = errors.New("permission denied (HTTP 403)")
 
 const baseURL = "https://api.vercel.com"
 
@@ -76,8 +82,11 @@ func (c *Client) request(method, path string, params map[string]string) (json.Ra
 		if err != nil {
 			return nil, fmt.Errorf("executing request: %w", err)
 		}
-		body, _ := io.ReadAll(resp.Body)
+		body, err := io.ReadAll(resp.Body)
 		resp.Body.Close()
+		if err != nil {
+			return nil, fmt.Errorf("reading response body for %s: %w", path, err)
+		}
 
 		if resp.StatusCode == 429 {
 			resetStr := resp.Header.Get("X-RateLimit-Reset")
@@ -94,6 +103,7 @@ func (c *Client) request(method, path string, params map[string]string) (json.Ra
 				}
 			}
 			log.Printf("Rate limited, waiting %ds...", wait)
+			c.logEvidence(method, path, resp.StatusCode, string(body))
 			time.Sleep(time.Duration(wait) * time.Second)
 			continue
 		}
@@ -104,7 +114,7 @@ func (c *Client) request(method, path string, params map[string]string) (json.Ra
 			c.PermissionDenied = append(c.PermissionDenied, path)
 			c.permMu.Unlock()
 			log.Printf("403 on %s %s — insufficient permissions, skipping.", method, path)
-			return nil, nil
+			return nil, ErrPermissionDenied
 		}
 		if resp.StatusCode == 404 {
 			return nil, nil
@@ -159,7 +169,7 @@ func (c *Client) GetPaginated(path, dataKey string, params map[string]string) ([
 		}
 		var items []json.RawMessage
 		if err := json.Unmarshal(itemsRaw, &items); err != nil {
-			break
+			return all, fmt.Errorf("parsing items for %s: %w", path, err)
 		}
 		all = append(all, items...)
 
@@ -579,9 +589,29 @@ func rawToSliceOfMaps(raw json.RawMessage) ([]map[string]interface{}, error) {
 
 // ProbeHeaders performs a HEAD request against the given URL and returns
 // the response headers as a lowercase key -> value map.
+// Blocks requests to private/reserved IP ranges to prevent SSRF.
 func (c *Client) ProbeHeaders(targetURL string) (map[string]string, error) {
+	dialer := &net.Dialer{Timeout: 10 * time.Second}
 	hc := &http.Client{
 		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, _, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, fmt.Errorf("invalid address %s: %w", addr, err)
+				}
+				ips, err := net.LookupIP(host)
+				if err != nil {
+					return nil, fmt.Errorf("DNS lookup failed for %s: %w", host, err)
+				}
+				for _, ip := range ips {
+					if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+						return nil, fmt.Errorf("blocked request to private/reserved IP %s for host %s", ip, host)
+					}
+				}
+				return dialer.DialContext(ctx, network, addr)
+			},
+		},
 	}
 	req, err := http.NewRequest("HEAD", targetURL, nil)
 	if err != nil {

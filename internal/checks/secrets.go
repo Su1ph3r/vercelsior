@@ -27,6 +27,16 @@ var sensitiveKeyPatterns = []string{
 	"GITHUB_TOKEN", "SLACK_TOKEN", "WEBHOOK_SECRET",
 }
 
+var clientExposurePrefixes = []struct {
+	Prefix    string
+	Framework string
+}{
+	{"VITE_", "Vite/SvelteKit"},
+	{"GATSBY_", "Gatsby"},
+	{"REACT_APP_", "Create React App"},
+	{"NUXT_PUBLIC_", "Nuxt"},
+}
+
 func isSensitiveName(name string) bool {
 	upper := strings.ToUpper(name)
 	for _, pattern := range sensitiveKeyPatterns {
@@ -49,8 +59,23 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"sec-001", "Secrets Check — Insufficient Permissions", catSecrets,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "sec-001", Title: "Secrets Check Failed", Category: catSecrets,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
@@ -58,6 +83,13 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 
 		envVars, err := c.ListProjectEnvVars(projID)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListProjectEnvVars"] {
+				permSeen["ListProjectEnvVars"] = true
+				findings = append(findings, permissionFinding(
+					"sec-001", "Env Var Check — Insufficient Permissions", catSecrets,
+					"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
 			continue
 		}
 
@@ -77,7 +109,7 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 					fmt.Sprintf("Project '%s': Environment variable '%s' appears sensitive but is stored as plain text.", projName, envKey),
 					"env_var", envID, envKey,
 					"Change the type to 'encrypted' or 'sensitive' for environment variables containing secrets.",
-					map[string]string{"project": projName, "type": envType},
+					map[string]string{"project": projName, "project_id": projID, "type": envType},
 				)
 				f.PocEvidence = []models.PocEvidence{buildEvidence(c, fmt.Sprintf("/v10/projects/%s/env", projID), env, []string{"key", "id", "type", "target"}, fmt.Sprintf("Sensitive variable '%s' stored as plain text", envKey))}
 				findings = append(findings, f)
@@ -102,10 +134,29 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 						fmt.Sprintf("Project '%s': Sensitive variable '%s' is available in %s environment(s). Preview deployments may be less protected.", projName, envKey, strings.Join(exposed, ", ")),
 						"env_var", envID, envKey,
 						"Restrict sensitive environment variables to production only, or use separate values for non-production environments.",
-						map[string]string{"project": projName, "environments": strings.Join(exposed, ",")},
+						map[string]string{"project": projName, "project_id": projID, "environments": strings.Join(exposed, ",")},
 					)
 					f.PocEvidence = []models.PocEvidence{buildEvidence(c, fmt.Sprintf("/v10/projects/%s/env", projID), env, []string{"key", "id", "type", "target"}, fmt.Sprintf("Sensitive variable '%s' exposed to non-production environments", envKey))}
 					findings = append(findings, f)
+				}
+			}
+
+			// sec-026: Framework client-exposure prefixes
+			for _, pfx := range clientExposurePrefixes {
+				if strings.HasPrefix(strings.ToUpper(envKey), pfx.Prefix) {
+					stripped := envKey[len(pfx.Prefix):]
+					if isSensitiveName(stripped) {
+						findings = append(findings, fail(
+							"sec-026", "Client-Exposed Sensitive Environment Variable", catSecrets,
+							models.Critical, 10.0,
+							fmt.Sprintf("The %s prefix exposes this variable to client-side JavaScript in %s applications. Variable '%s' matches sensitive naming patterns and may leak secrets to browsers.", pfx.Prefix, pfx.Framework, envKey),
+							fmt.Sprintf("Project '%s': env var '%s' uses the %s prefix which exposes it to client-side code.", projName, envKey, pfx.Prefix),
+							"env_var", envID, envKey,
+							fmt.Sprintf("Remove the %s prefix or move the value to a server-only environment variable.", pfx.Prefix),
+							map[string]string{"project": projName, "project_id": projID, "prefix": pfx.Prefix, "framework": pfx.Framework},
+						))
+						break // only flag once per env var
+					}
 				}
 			}
 
@@ -221,6 +272,12 @@ func (sc *SecretsChecks) checkSharedEnvVars(c *client.Client) []models.Finding {
 
 	sharedVars, err := c.ListSharedEnvVars()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"sec-010", "Shared Env Vars Check — Insufficient Permissions", catSecrets,
+				"Cannot list shared environment variables: API token lacks required permissions. This check was skipped.",
+			))
+		}
 		return findings
 	}
 
@@ -240,6 +297,25 @@ func (sc *SecretsChecks) checkSharedEnvVars(c *client.Client) []models.Finding {
 				"Review whether all linked projects need this variable. Consider per-project secrets where possible.",
 				map[string]string{"linked_projects": fmt.Sprintf("%d", len(linkedProjects))},
 			))
+		}
+
+		// sec-026: Framework client-exposure prefixes (shared env vars)
+		for _, pfx := range clientExposurePrefixes {
+			if strings.HasPrefix(strings.ToUpper(envKey), pfx.Prefix) {
+				stripped := envKey[len(pfx.Prefix):]
+				if isSensitiveName(stripped) {
+					findings = append(findings, fail(
+						"sec-026", "Client-Exposed Sensitive Shared Environment Variable", catSecrets,
+						models.Critical, 10.0,
+						fmt.Sprintf("The %s prefix exposes this variable to client-side JavaScript in %s applications. Variable '%s' matches sensitive naming patterns and may leak secrets to browsers.", pfx.Prefix, pfx.Framework, envKey),
+						fmt.Sprintf("Shared env var '%s' uses the %s prefix which exposes it to client-side code across all linked projects.", envKey, pfx.Prefix),
+						"shared_env_var", envID, envKey,
+						fmt.Sprintf("Remove the %s prefix or move the value to a server-only environment variable.", pfx.Prefix),
+						map[string]string{"prefix": pfx.Prefix, "framework": pfx.Framework},
+					))
+					break // only flag once per env var
+				}
+			}
 		}
 
 		if sensitive && envType == "plain" {

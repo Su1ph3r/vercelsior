@@ -28,6 +28,19 @@ func (gc *GitChecks) checkProjects(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"git-001", "Git Check — Insufficient Permissions", catGit,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "git-001", Title: "Git Check Failed", Category: catGit,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -41,7 +54,7 @@ func (gc *GitChecks) checkProjects(c *client.Client) []models.Finding {
 		}
 
 		findings = append(findings, gc.checkPersonalAccount(link, projID, projName)...)
-		findings = append(findings, gc.checkAutoDeploy(link, projID, projName)...)
+		findings = append(findings, gc.checkAutoDeploy(c, link, projID, projName)...)
 	}
 
 	return findings
@@ -99,7 +112,7 @@ func (gc *GitChecks) checkPersonalAccount(link map[string]interface{}, projID, p
 }
 
 // git-003: Auto-Deploy Enabled on All Branches
-func (gc *GitChecks) checkAutoDeploy(link map[string]interface{}, projID, projName string) []models.Finding {
+func (gc *GitChecks) checkAutoDeploy(c *client.Client, link map[string]interface{}, projID, projName string) []models.Finding {
 	var findings []models.Finding
 
 	productionBranch := str(link["productionBranch"])
@@ -124,7 +137,7 @@ func (gc *GitChecks) checkAutoDeploy(link map[string]interface{}, projID, projNa
 			"Configure branch deploy filtering to limit which branches trigger deployments.",
 			map[string]string{"production_branch": productionBranch},
 		)
-		f.PocEvidence = []models.PocEvidence{buildEvidence(nil, "/v10/projects", link, []string{"type", "productionBranch", "deployBranch", "gitDeploy"}, "Project has no branch deploy filtering configured")}
+		f.PocEvidence = []models.PocEvidence{buildEvidence(c, "/v10/projects", link, []string{"type", "productionBranch", "deployBranch", "gitDeploy"}, "Project has no branch deploy filtering configured")}
 		findings = append(findings, f)
 	} else {
 		findings = append(findings, pass(
@@ -143,8 +156,16 @@ func (gc *GitChecks) checkProtectedGitScopes(c *client.Client) []models.Finding 
 
 	teams, err := c.ListTeams()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"git-002", "Protected Git Scopes Check — Insufficient Permissions", catGit,
+				"Cannot list teams: API token lacks required permissions. This check was skipped.",
+			))
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, t := range teams {
 		teamID := str(t["id"])
@@ -155,7 +176,17 @@ func (gc *GitChecks) checkProtectedGitScopes(c *client.Client) []models.Finding 
 
 		// Fetch full team details to get configuration
 		team, err := c.GetTeam(teamID)
-		if err != nil || team == nil {
+		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["GetTeam"] {
+				permSeen["GetTeam"] = true
+				findings = append(findings, permissionFinding(
+					"git-002", "Protected Git Scopes Check — Insufficient Permissions", catGit,
+					"Cannot get team details: API token lacks required permissions. This check was skipped for all teams.",
+				))
+			}
+			continue
+		}
+		if team == nil {
 			continue
 		}
 

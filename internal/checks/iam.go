@@ -27,12 +27,19 @@ func (ic *IAMChecks) checkTokens(c *client.Client) []models.Finding {
 	var findings []models.Finding
 	tokens, err := c.ListTokens()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "iam-001", Title: "Token Enumeration", Category: catIAM,
-			Severity: models.Info, Status: models.Error,
-			Description: fmt.Sprintf("Failed to list tokens: %v", err),
-			ResourceType: "token", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"iam-001", "Token Enumeration — Insufficient Permissions", catIAM,
+				"Cannot list tokens: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "iam-001", Title: "Token Enumeration", Category: catIAM,
+				Severity: models.Info, Status: models.Error,
+				Description: fmt.Sprintf("Failed to list tokens: %v", err),
+				ResourceType: "token", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -146,16 +153,41 @@ func (ic *IAMChecks) checkTeams(c *client.Client) []models.Finding {
 	var findings []models.Finding
 	teams, err := c.ListTeams()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"iam-010", "Team Check — Insufficient Permissions", catIAM,
+				"Cannot list teams: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "iam-010", Title: "Team Check Failed", Category: catIAM,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list teams: %v", err),
+				ResourceType: "team", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, teamSummary := range teams {
 		teamID := str(teamSummary["id"])
 
 		// Get full team details (list response lacks some fields)
 		team, err := c.GetTeam(teamID)
-		if err != nil || team == nil {
+		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["GetTeam"] {
+				permSeen["GetTeam"] = true
+				findings = append(findings, permissionFinding(
+					"iam-010", "Team Detail Check — Insufficient Permissions", catIAM,
+					"Cannot get team details: API token lacks required permissions. This check was skipped for all teams.",
+				))
+			}
 			team = teamSummary // fallback to summary
+		}
+		if team == nil {
+			team = teamSummary
 		}
 
 		teamName := str(team["name"])
@@ -267,6 +299,15 @@ func (ic *IAMChecks) checkTeams(c *client.Client) []models.Finding {
 
 		// Check team members for role distribution
 		members, err := c.ListTeamMembers(teamID)
+		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListTeamMembers"] {
+				permSeen["ListTeamMembers"] = true
+				findings = append(findings, permissionFinding(
+					"iam-015", "Team Members Check — Insufficient Permissions", catIAM,
+					"Cannot list team members: API token lacks required permissions. This check was skipped for all teams.",
+				))
+			}
+		}
 		if err == nil {
 			ownerCount := 0
 			for _, m := range members {
@@ -337,6 +378,19 @@ func (ic *IAMChecks) checkAccessGroups(c *client.Client) []models.Finding {
 	var findings []models.Finding
 	groups, err := c.ListAccessGroups()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"iam-020", "Access Group Check — Insufficient Permissions", catIAM,
+				"Cannot list access groups: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "iam-020", Title: "Access Group Check Failed", Category: catIAM,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list access groups: %v", err),
+				ResourceType: "access_group", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 

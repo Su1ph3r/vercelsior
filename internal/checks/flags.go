@@ -25,12 +25,19 @@ func (f *FeatureFlagChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "flag-001", Title: "Project Enumeration", Category: catFlags,
-			Severity: models.Info, Status: models.Error,
-			Description:  fmt.Sprintf("Failed to list projects: %v", err),
-			ResourceType: "project", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"flag-001", "Project Enumeration — Insufficient Permissions", catFlags,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "flag-001", Title: "Project Enumeration", Category: catFlags,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -40,12 +47,19 @@ func (f *FeatureFlagChecks) Run(c *client.Client) []models.Finding {
 
 		flags, err := c.ListFeatureFlags(projID)
 		if err != nil {
-			findings = append(findings, models.Finding{
-				CheckID: "flag-001", Title: "Feature Flag Enumeration", Category: catFlags,
-				Severity: models.Info, Status: models.Error,
-				Description:  fmt.Sprintf("Failed to list feature flags for project '%s': %v", projName, err),
-				ResourceType: "project", ResourceID: projID, ResourceName: projName,
-			})
+			if IsPermissionDenied(err) {
+				findings = append(findings, permissionFinding(
+					"flag-001", "Feature Flag Check — Insufficient Permissions", catFlags,
+					fmt.Sprintf("Cannot list feature flags for project '%s': API token lacks required permissions.", projName),
+				))
+			} else {
+				findings = append(findings, models.Finding{
+					CheckID: "flag-001", Title: "Feature Flag Enumeration", Category: catFlags,
+					Severity: models.Info, Status: models.Error,
+					Description:  fmt.Sprintf("Failed to list feature flags for project '%s': %v", projName, err),
+					ResourceType: "project", ResourceID: projID, ResourceName: projName,
+				})
+			}
 			continue
 		}
 

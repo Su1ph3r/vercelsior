@@ -38,14 +38,23 @@ func (sc *StorageChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "stor-001", Title: "Project Enumeration", Category: catStorage,
-			Severity: models.Info, Status: models.Error,
-			Description:  fmt.Sprintf("Failed to list projects: %v", err),
-			ResourceType: "project", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"stor-001", "Project Enumeration — Insufficient Permissions", catStorage,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "stor-001", Title: "Project Enumeration", Category: catStorage,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
@@ -53,6 +62,13 @@ func (sc *StorageChecks) Run(c *client.Client) []models.Finding {
 
 		envVars, err := c.ListProjectEnvVars(projID)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListProjectEnvVars"] {
+				permSeen["ListProjectEnvVars"] = true
+				findings = append(findings, permissionFinding(
+					"sto-010", "Storage Check — Insufficient Permissions", catStorage,
+					"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
 			continue
 		}
 

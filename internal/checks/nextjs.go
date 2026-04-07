@@ -10,6 +10,113 @@ import (
 
 const catFramework = "Framework Security"
 
+type nextjsCVE struct {
+	ID           string
+	Description  string
+	CVSS         float64
+	IsVulnerable func(major, minor, patch int) bool
+}
+
+var nextjsCVEs = []nextjsCVE{
+	{
+		ID:          "CVE-2025-29927",
+		Description: "Next.js middleware authorization bypass",
+		CVSS:        9.1,
+		IsVulnerable: func(maj, min, pat int) bool {
+			// Patched in 14.2.25 and 15.2.3; middleware introduced in 12.0
+			if maj < 12 {
+				return false
+			}
+			if maj < 14 {
+				return true
+			}
+			if maj == 14 {
+				return min < 2 || (min == 2 && pat < 25)
+			}
+			if maj == 15 {
+				return min < 2 || (min == 2 && pat < 3)
+			}
+			return false
+		},
+	},
+	{
+		ID:          "CVE-2025-55182",
+		Description: "React Server Components deserialization RCE (React2Shell)",
+		CVSS:        10.0,
+		IsVulnerable: func(maj, min, pat int) bool {
+			// Complex matrix. Patched per minor series:
+			// 14.2.35+, 15.0.7+, 15.1.11+, 15.2.8+, 15.3.8+, 15.4.10+, 15.5.9+, 16.0.10+
+			if maj < 14 {
+				return false // pre-React 19, not affected
+			}
+			if maj == 14 {
+				return min == 2 && pat < 35
+			}
+			if maj == 15 {
+				switch min {
+				case 0:
+					return pat >= 4 && pat < 7 // affected from 15.0.4
+				case 1:
+					return pat < 11
+				case 2:
+					return pat < 8
+				case 3:
+					return pat < 8
+				case 4:
+					return pat < 10
+				case 5:
+					return pat < 9
+				default:
+					return false
+				}
+			}
+			if maj == 16 {
+				return min == 0 && pat < 10
+			}
+			return false
+		},
+	},
+	{
+		ID:          "CVE-2025-49826",
+		Description: "ISR cache poisoning via 204 response",
+		CVSS:        7.5,
+		IsVulnerable: func(maj, min, pat int) bool {
+			// Affects 15.1.0 to 15.1.7
+			return maj == 15 && min == 1 && pat < 8
+		},
+	},
+	{
+		ID:          "CVE-2025-59471",
+		Description: "Image optimization memory exhaustion via /_next/image",
+		CVSS:        5.9,
+		IsVulnerable: func(maj, min, pat int) bool {
+			// Patched in 15.5.10 and 16.1.5
+			if maj == 15 {
+				return min < 5 || (min == 5 && pat < 10)
+			}
+			if maj == 16 {
+				return min < 1 || (min == 1 && pat < 5)
+			}
+			return false
+		},
+	},
+	{
+		ID:          "CVE-2025-59472",
+		Description: "PPR resume endpoint denial of service via zip bomb",
+		CVSS:        5.9,
+		IsVulnerable: func(maj, min, pat int) bool {
+			// Same patch versions as CVE-2025-59471
+			if maj == 15 {
+				return min < 5 || (min == 5 && pat < 10)
+			}
+			if maj == 16 {
+				return min < 1 || (min == 1 && pat < 5)
+			}
+			return false
+		},
+	},
+}
+
 type NextJSChecks struct{}
 
 func (nc *NextJSChecks) Name() string     { return "NextJS" }
@@ -20,6 +127,19 @@ func (nc *NextJSChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"njs-001", "Next.js Check — Insufficient Permissions", catFramework,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "njs-001", Title: "Next.js Check Failed", Category: catFramework,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -34,7 +154,14 @@ func (nc *NextJSChecks) Run(c *client.Client) []models.Finding {
 
 	// Also check shared/team-level env vars for NEXT_PUBLIC_ leaks
 	sharedEnvs, sharedErr := c.ListSharedEnvVars()
-	if sharedErr == nil {
+	if sharedErr != nil {
+		if IsPermissionDenied(sharedErr) {
+			findings = append(findings, permissionFinding(
+				"njs-001", "Shared Env Var Check — Insufficient Permissions", catFramework,
+				"Cannot list shared environment variables: API token lacks required permissions. This check was skipped.",
+			))
+		}
+	} else {
 		for _, env := range sharedEnvs {
 			envKey := str(env["key"])
 			envID := str(env["id"])
@@ -67,6 +194,12 @@ func (nc *NextJSChecks) checkPublicEnvVars(c *client.Client, projID, projName st
 
 	envVars, err := c.ListProjectEnvVars(projID)
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"njs-001", "Public Env Vars Check — Insufficient Permissions", catFramework,
+				"Cannot list project environment variables: API token lacks required permissions. This check was skipped.",
+			))
+		}
 		return findings
 	}
 
@@ -87,7 +220,7 @@ func (nc *NextJSChecks) checkPublicEnvVars(c *client.Client, projID, projName st
 				fmt.Sprintf("Project '%s': Environment variable '%s' has the NEXT_PUBLIC_ prefix and a sensitive name. This value is exposed in client-side JavaScript.", projName, envKey),
 				"env_var", envID, envKey,
 				"Remove the NEXT_PUBLIC_ prefix from sensitive variables. Use server-side API routes to access secrets instead of exposing them to the client.",
-				map[string]string{"project": projName, "variable": envKey},
+				map[string]string{"project": projName, "project_id": projID, "variable": envKey},
 			)
 			f.PocEvidence = []models.PocEvidence{buildEvidence(c, fmt.Sprintf("/v10/projects/%s/env", projID), env, []string{"key", "id", "type", "target"}, fmt.Sprintf("NEXT_PUBLIC_ variable '%s' with sensitive name is exposed client-side", envKey))}
 			findings = append(findings, f)
@@ -103,6 +236,19 @@ func (nc *NextJSChecks) checkOutdatedVersion(c *client.Client, projID, projName 
 
 	deployments, err := c.ListDeploymentsLimit(projID, 5)
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"njs-002", "Next.js Version Check — Insufficient Permissions", catFramework,
+				fmt.Sprintf("Cannot list deployments for project '%s': API token lacks required permissions. This check was skipped.", projName),
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "njs-002", Title: "Next.js Version Check Failed", Category: catFramework,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list deployments for project '%s': %v", projName, err),
+				ResourceType: "project", ResourceID: projID, ResourceName: projName,
+			})
+		}
 		return findings
 	}
 
@@ -123,42 +269,46 @@ func (nc *NextJSChecks) checkOutdatedVersion(c *client.Client, projID, projName 
 			continue
 		}
 
-		major, minor, patch := parseVersion(version)
-		if major == 0 && minor == 0 && patch == 0 {
+		major, minor, patch, ok := parseVersion(version)
+		if !ok {
 			continue
 		}
 
-		vulnerable := false
-		if major < 14 {
-			vulnerable = true
-		} else if major == 14 {
-			if minor < 2 {
-				vulnerable = true
-			} else if minor == 2 && patch < 25 {
-				vulnerable = true
-			}
-		} else if major == 15 {
-			if minor < 2 {
-				vulnerable = true
-			} else if minor == 2 && patch < 3 {
-				vulnerable = true
+		// Collect all applicable CVEs for this version
+		var matchedCVEs []string
+		var maxCVSS float64
+		for _, cve := range nextjsCVEs {
+			if cve.IsVulnerable(major, minor, patch) {
+				matchedCVEs = append(matchedCVEs, cve.ID)
+				if cve.CVSS > maxCVSS {
+					maxCVSS = cve.CVSS
+				}
 			}
 		}
 
-		if vulnerable {
+		if len(matchedCVEs) > 0 {
+			cveList := strings.Join(matchedCVEs, ", ")
+			sev := models.High
+			if maxCVSS >= 9.0 {
+				sev = models.Critical
+			}
 			findings = append(findings, fail(
-				"njs-002", "Outdated Next.js Version With Known CVEs", catFramework, models.Critical,
-				9.0,
-				"CVE-2025-29927 allows complete middleware authentication bypass. React2Shell (CVE-2025-55182) enables remote code execution. These are actively exploited.",
-				fmt.Sprintf("Project '%s': Deployment is running Next.js %s which has known critical CVEs.", projName, version),
+				"njs-002", "Outdated Next.js Version With Known CVEs", catFramework,
+				sev, maxCVSS,
+				fmt.Sprintf("Next.js %s is affected by %d known CVE(s): %s. The most severe has a CVSS score of %.1f.", version, len(matchedCVEs), cveList, maxCVSS),
+				fmt.Sprintf("Project '%s' is running Next.js %s which is affected by: %s.", projName, version, cveList),
 				"project", projID, projName,
-				"Upgrade Next.js to the latest version. At minimum: 14.2.25+ or 15.2.3+ to patch CVE-2025-29927.",
-				map[string]string{"project": projName, "nextjs_version": version},
+				"Update Next.js to the latest patched version. See individual CVE advisories for minimum safe versions.",
+				map[string]string{
+					"nextjs_version": version,
+					"cves":           cveList,
+					"max_cvss":       fmt.Sprintf("%.1f", maxCVSS),
+				},
 			))
 		} else {
 			findings = append(findings, pass(
 				"njs-002", "Next.js Version Up To Date", catFramework,
-				fmt.Sprintf("Project '%s': Running Next.js %s with no known critical CVEs.", projName, version),
+				fmt.Sprintf("Project '%s': Running Next.js %s with no known CVEs.", projName, version),
 				"project", projID, projName,
 			))
 		}
@@ -198,40 +348,48 @@ func (nc *NextJSChecks) checkFrameworkSet(p map[string]interface{}, projID, proj
 }
 
 // parseVersion extracts major, minor, patch from a semver-like string.
-// Returns (0,0,0) if parsing fails.
-func parseVersion(v string) (int, int, int) {
-	// Strip leading "v" if present
+// Returns ok=false if parsing fails.
+func parseVersion(v string) (int, int, int, bool) {
 	v = strings.TrimPrefix(v, "v")
 
-	// Split on "." and parse up to three parts
 	parts := strings.SplitN(v, ".", 3)
 	if len(parts) < 2 {
-		return 0, 0, 0
+		return 0, 0, 0, false
 	}
 
-	major := parseInt(parts[0])
-	minor := parseInt(parts[1])
+	major, ok1 := safeParseInt(parts[0])
+	minor, ok2 := safeParseInt(parts[1])
+	if !ok1 || !ok2 {
+		return 0, 0, 0, false
+	}
+
 	patch := 0
 	if len(parts) >= 3 {
-		// Handle pre-release suffixes like "15.2.3-canary.1"
 		patchStr := parts[2]
 		if idx := strings.IndexAny(patchStr, "-+"); idx >= 0 {
 			patchStr = patchStr[:idx]
 		}
-		patch = parseInt(patchStr)
+		patch, _ = safeParseInt(patchStr)
 	}
 
-	return major, minor, patch
+	return major, minor, patch, true
 }
 
-// parseInt is a simple string-to-int converter that returns 0 on failure.
-func parseInt(s string) int {
+// safeParseInt converts a string to int, returning ok=false for empty or non-numeric strings.
+func safeParseInt(s string) (int, bool) {
+	if len(s) == 0 {
+		return 0, false
+	}
 	n := 0
 	for _, ch := range s {
 		if ch < '0' || ch > '9' {
-			return 0
+			return 0, false
 		}
-		n = n*10 + int(ch-'0')
+		next := n*10 + int(ch-'0')
+		if next < n {
+			return 0, false
+		}
+		n = next
 	}
-	return n
+	return n, true
 }

@@ -20,6 +20,19 @@ func (ic *IntegrationChecks) Run(c *client.Client) []models.Finding {
 
 	integrations, err := c.ListIntegrations()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"int-001", "Integration Check — Insufficient Permissions", catIntegrations,
+				"Cannot list integrations: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "int-001", Title: "Integration Check Failed", Category: catIntegrations,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list integrations: %v", err),
+				ResourceType: "integration", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 

@@ -20,14 +20,36 @@ func (s *SandboxChecks) Run(c *client.Client) []models.Finding {
 
 	projects, err := c.ListProjects()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"sand-001", "Sandbox Check — Insufficient Permissions", catSandbox,
+				"Cannot list projects: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "sand-001", Title: "Sandbox Check Failed", Category: catSandbox,
+				Severity: models.Info, Status: models.Error,
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
+				ResourceType: "project", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
 		projID := str(p["id"])
 
 		sandboxes, err := c.ListSandboxes(projID)
 		if err != nil {
+			if IsPermissionDenied(err) && !permSeen["ListSandboxes"] {
+				permSeen["ListSandboxes"] = true
+				findings = append(findings, permissionFinding(
+					"sbx-001", "Sandbox Check — Insufficient Permissions", catSandbox,
+					"Cannot list sandboxes: API token lacks required permissions. This check was skipped for all projects.",
+				))
+			}
 			continue
 		}
 

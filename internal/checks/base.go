@@ -2,6 +2,7 @@ package checks
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/su1ph/vercelsior/internal/client"
 	"github.com/su1ph/vercelsior/internal/models"
@@ -165,4 +166,24 @@ func mapVal(v interface{}) map[string]interface{} {
 		return m
 	}
 	return nil
+}
+
+// IsPermissionDenied returns true if the error is a 403 permission denied error.
+func IsPermissionDenied(err error) bool {
+	return err != nil && errors.Is(err, client.ErrPermissionDenied)
+}
+
+// permissionFinding creates a standardized ERROR finding for 403 responses.
+func permissionFinding(checkID, title, category, desc string) models.Finding {
+	return models.Finding{
+		CheckID:      checkID,
+		Title:        title,
+		Category:     category,
+		Severity:     models.High,
+		Status:       models.Error,
+		Description:  desc,
+		ResourceType: "permission",
+		ResourceID:   "N/A",
+		Remediation:  "Ensure your API token has the required scopes for this check. See Vercel API token documentation.",
+	}
 }

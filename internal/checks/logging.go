@@ -27,12 +27,19 @@ func (lc *LoggingChecks) checkLogDrains(c *client.Client) []models.Finding {
 
 	drains, err := c.ListLogDrains()
 	if err != nil {
-		findings = append(findings, models.Finding{
-			CheckID: "log-001", Title: "Log Drain Enumeration", Category: catLogging,
-			Severity: models.Info, Status: models.Error,
-			Description: fmt.Sprintf("Failed to list log drains: %v", err),
-			ResourceType: "log_drain", ResourceID: "N/A",
-		})
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"log-001", "Log Drain Enumeration — Insufficient Permissions", catLogging,
+				"Cannot list log drains: API token lacks required permissions. This check was skipped.",
+			))
+		} else {
+			findings = append(findings, models.Finding{
+				CheckID: "log-001", Title: "Log Drain Enumeration", Category: catLogging,
+				Severity: models.Info, Status: models.Error,
+				Description: fmt.Sprintf("Failed to list log drains: %v", err),
+				ResourceType: "log_drain", ResourceID: "N/A",
+			})
+		}
 		return findings
 	}
 
@@ -108,6 +115,12 @@ func (lc *LoggingChecks) checkWebhooks(c *client.Client) []models.Finding {
 
 	webhooks, err := c.ListWebhooks()
 	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"log-010", "Webhooks Check — Insufficient Permissions", catLogging,
+				"Cannot list webhooks: API token lacks required permissions. This check was skipped.",
+			))
+		}
 		return findings
 	}
 
@@ -150,6 +163,20 @@ func (lc *LoggingChecks) checkWebhooks(c *client.Client) []models.Finding {
 				fmt.Sprintf("Webhook '%s' sends events over unencrypted HTTP.", whID),
 				"webhook", whID, whID,
 				"Change the webhook URL to use HTTPS.",
+				map[string]string{"url": whURL},
+			))
+		}
+
+		// Check for missing webhook signing secret
+		secret := str(wh["secret"])
+		if secret == "" {
+			findings = append(findings, warn(
+				"log-024", "Webhook Missing Signing Secret", catLogging,
+				models.Medium, 5.0,
+				"Without a webhook secret, the x-vercel-signature HMAC header cannot be validated, allowing anyone who discovers the endpoint URL to forge webhook deliveries.",
+				fmt.Sprintf("Webhook '%s' does not have a signing secret configured.", whID),
+				"webhook", whID, whID,
+				"Configure a webhook secret to enable HMAC signature verification on incoming deliveries.",
 				map[string]string{"url": whURL},
 			))
 		}
