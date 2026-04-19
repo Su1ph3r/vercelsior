@@ -205,4 +205,3 @@ func (s *Scanner) enrichFindings(findings []models.Finding) {
 		checks.EnrichFinding(f)
 	}
 }
-

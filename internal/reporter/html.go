@@ -11,21 +11,21 @@ import (
 )
 
 type htmlData struct {
-	Result            *models.ScanResult
-	CriticalCount     int
-	HighCount         int
-	MediumCount       int
-	LowCount          int
-	InfoCount         int
-	FailFindings      []models.Finding
-	WarnFindings      []models.Finding
-	PassFindings      []models.Finding
-	Categories        []categoryGroup
-	PostureScore      float64
-	PostureClass      string
-	ScorePercent      int
-	ScoreClass        string
-	DashOffset        string
+	Result        *models.ScanResult
+	CriticalCount int
+	HighCount     int
+	MediumCount   int
+	LowCount      int
+	InfoCount     int
+	FailFindings  []models.Finding
+	WarnFindings  []models.Finding
+	PassFindings  []models.Finding
+	Categories    []categoryGroup
+	PostureScore  float64
+	PostureClass  string
+	ScorePercent  int
+	ScoreClass    string
+	DashOffset    string
 }
 
 type categoryGroup struct {

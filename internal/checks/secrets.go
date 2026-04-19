@@ -97,7 +97,7 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 			envKey := str(env["key"])
 			envID := str(env["id"])
 			envType := str(env["type"]) // "encrypted", "plain", "secret", "sensitive", "system"
-			targets := env["target"]     // array of environments: "production", "preview", "development"
+			targets := env["target"]    // array of environments: "production", "preview", "development"
 
 			sensitive := isSensitiveName(envKey)
 

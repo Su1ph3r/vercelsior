@@ -28,7 +28,7 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 			findings = append(findings, models.Finding{
 				CheckID: "fw-001", Title: "Project Enumeration", Category: catFirewall,
 				Severity: models.Info, Status: models.Error,
-				Description: fmt.Sprintf("Failed to list projects: %v", err),
+				Description:  fmt.Sprintf("Failed to list projects: %v", err),
 				ResourceType: "project", ResourceID: "N/A",
 			})
 		}

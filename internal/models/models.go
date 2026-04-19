@@ -68,23 +68,23 @@ type PocEvidence struct {
 }
 
 type Finding struct {
-	CheckID                string                `json:"check_id"`
-	Title                  string                `json:"title"`
-	Category               string                `json:"category"`
-	Severity               Severity              `json:"severity"`
-	Status                 Status                `json:"status"`
-	RiskScore              float64               `json:"risk_score"`
-	Rationale              string                `json:"rationale"`
-	Description            string                `json:"description"`
-	ResourceType           string                `json:"resource_type"`
-	ResourceID             string                `json:"resource_id"`
-	ResourceName           string                `json:"resource_name"`
-	Remediation            string                `json:"remediation"`
-	Details                map[string]string     `json:"details,omitempty"`
-	PocEvidence            []PocEvidence         `json:"poc_evidence,omitempty"`
-	PocVerification        string                `json:"poc_verification,omitempty"`
-	RemediationCommands    []RemediationCommand  `json:"remediation_commands,omitempty"`
-	RemediationResources   []RemediationResource `json:"remediation_resources,omitempty"`
+	CheckID              string                `json:"check_id"`
+	Title                string                `json:"title"`
+	Category             string                `json:"category"`
+	Severity             Severity              `json:"severity"`
+	Status               Status                `json:"status"`
+	RiskScore            float64               `json:"risk_score"`
+	Rationale            string                `json:"rationale"`
+	Description          string                `json:"description"`
+	ResourceType         string                `json:"resource_type"`
+	ResourceID           string                `json:"resource_id"`
+	ResourceName         string                `json:"resource_name"`
+	Remediation          string                `json:"remediation"`
+	Details              map[string]string     `json:"details,omitempty"`
+	PocEvidence          []PocEvidence         `json:"poc_evidence,omitempty"`
+	PocVerification      string                `json:"poc_verification,omitempty"`
+	RemediationCommands  []RemediationCommand  `json:"remediation_commands,omitempty"`
+	RemediationResources []RemediationResource `json:"remediation_resources,omitempty"`
 }
 
 // RiskRating returns the human-readable rating for a risk score.

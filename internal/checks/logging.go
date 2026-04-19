@@ -36,7 +36,7 @@ func (lc *LoggingChecks) checkLogDrains(c *client.Client) []models.Finding {
 			findings = append(findings, models.Finding{
 				CheckID: "log-001", Title: "Log Drain Enumeration", Category: catLogging,
 				Severity: models.Info, Status: models.Error,
-				Description: fmt.Sprintf("Failed to list log drains: %v", err),
+				Description:  fmt.Sprintf("Failed to list log drains: %v", err),
 				ResourceType: "log_drain", ResourceID: "N/A",
 			})
 		}
@@ -139,15 +139,15 @@ func (lc *LoggingChecks) checkWebhooks(c *client.Client) []models.Finding {
 	}
 
 	securityEvents := map[string]bool{
-		"firewall.attack":                    false,
-		"firewall.system-rule-anomaly":       false,
-		"firewall.custom-rule-anomaly":       false,
-		"project.env-variable.created":       false,
-		"project.env-variable.updated":       false,
-		"project.env-variable.deleted":       false,
-		"domain.certificate.expired":         false,
-		"budget.reached":                         false,
-		"edge-config.items.updated":              false,
+		"firewall.attack":                               false,
+		"firewall.system-rule-anomaly":                  false,
+		"firewall.custom-rule-anomaly":                  false,
+		"project.env-variable.created":                  false,
+		"project.env-variable.updated":                  false,
+		"project.env-variable.deleted":                  false,
+		"domain.certificate.expired":                    false,
+		"budget.reached":                                false,
+		"edge-config.items.updated":                     false,
 		"integration-configuration.permission-upgraded": false,
 	}
 

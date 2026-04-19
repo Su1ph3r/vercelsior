@@ -244,7 +244,8 @@ func (ic *InfrastructureChecks) checkAliases(c *client.Client) []models.Finding 
 		return findings
 	}
 
-	for _, a := range aliases {		aliasID := str(a["uid"])
+	for _, a := range aliases {
+		aliasID := str(a["uid"])
 		if aliasID == "" {
 			aliasID = str(a["id"])
 		}

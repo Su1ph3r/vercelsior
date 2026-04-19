@@ -29,5 +29,15 @@ jobs:
       - name: Vet
         run: go vet ./...
 
+      - name: Gofmt
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "The following files need gofmt:"
+            echo "$unformatted"
+            exit 1
+          fi
+
       - name: Test
         run: go test ./...

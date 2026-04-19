@@ -36,7 +36,7 @@ func (ic *IAMChecks) checkTokens(c *client.Client) []models.Finding {
 			findings = append(findings, models.Finding{
 				CheckID: "iam-001", Title: "Token Enumeration", Category: catIAM,
 				Severity: models.Info, Status: models.Error,
-				Description: fmt.Sprintf("Failed to list tokens: %v", err),
+				Description:  fmt.Sprintf("Failed to list tokens: %v", err),
 				ResourceType: "token", ResourceID: "N/A",
 			})
 		}
