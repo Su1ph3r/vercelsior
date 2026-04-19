@@ -2,6 +2,10 @@
 
 **Open-source security scanner and configuration auditor for Vercel.**
 
+[![CI](https://github.com/Su1ph3r/vercelsior/actions/workflows/ci.yml/badge.svg)](https://github.com/Su1ph3r/vercelsior/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Go Report Card](https://goreportcard.com/badge/github.com/su1ph/vercelsior)](https://goreportcard.com/report/github.com/su1ph/vercelsior)
+
 Vercelsior is to Vercel what [Prowler](https://github.com/prowler-cloud/prowler) is to AWS and [ScoutSuite](https://github.com/nccgroup/ScoutSuite) is to multi-cloud. It audits your Vercel account, team, and project configurations for security misconfigurations, compliance gaps, and attack surface exposure.
 
 Single binary. Zero dependencies. Linux, macOS, Windows.
