@@ -6,6 +6,8 @@ Vercelsior is to Vercel what [Prowler](https://github.com/prowler-cloud/prowler)
 
 Single binary. Zero dependencies. Linux, macOS, Windows.
 
+*If you're here after the [April 2026 Vercel security incident](https://vercel.com/kb/bulletin/vercel-april-2026-security-incident), see [`CHECK_REFERENCE.md`](./CHECK_REFERENCE.md) for the applicable checks.*
+
 ---
 
 ## What It Finds
