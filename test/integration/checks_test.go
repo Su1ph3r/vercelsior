@@ -7,10 +7,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/su1ph/vercelsior/internal/client"
-	"github.com/su1ph/vercelsior/internal/config"
-	"github.com/su1ph/vercelsior/internal/models"
-	"github.com/su1ph/vercelsior/internal/scanner"
+	"github.com/Su1ph3r/vercelsior/internal/client"
+	"github.com/Su1ph3r/vercelsior/internal/config"
+	"github.com/Su1ph3r/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/scanner"
 )
 
 // writeFixture writes a synthetic API response fixture using the same key

@@ -5,8 +5,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/su1ph/vercelsior/internal/client"
-	"github.com/su1ph/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/client"
+	"github.com/Su1ph3r/vercelsior/internal/models"
 )
 
 const catTLS = "Certificates & TLS"

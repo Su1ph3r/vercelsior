@@ -1,5 +1,10 @@
 # Changelog
 
+## v0.1.3
+
+### Fixed
+- Module path in `go.mod` and all import statements corrected from `github.com/su1ph/vercelsior` to `github.com/Su1ph3r/vercelsior`. Previous versions could not be installed via `go install` because the module path did not resolve to the real repository. `go install github.com/Su1ph3r/vercelsior/cmd/vercelsior@latest` now works correctly.
+
 ## v0.1.2
 
 ### New Checks

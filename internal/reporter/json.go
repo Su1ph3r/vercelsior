@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"os"
 
-	"github.com/su1ph/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/models"
 )
 
 func WriteJSON(result *models.ScanResult, path string) error {

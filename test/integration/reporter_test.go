@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/su1ph/vercelsior/internal/models"
-	"github.com/su1ph/vercelsior/internal/reporter"
+	"github.com/Su1ph3r/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/reporter"
 )
 
 func runReportScan(t *testing.T) *models.ScanResult {

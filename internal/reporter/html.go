@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/su1ph/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/models"
 )
 
 type htmlData struct {

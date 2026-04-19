@@ -6,10 +6,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/su1ph/vercelsior/internal/checks"
-	"github.com/su1ph/vercelsior/internal/client"
-	"github.com/su1ph/vercelsior/internal/config"
-	"github.com/su1ph/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/checks"
+	"github.com/Su1ph3r/vercelsior/internal/client"
+	"github.com/Su1ph3r/vercelsior/internal/config"
+	"github.com/Su1ph3r/vercelsior/internal/models"
 )
 
 type ProgressFunc func(checkName string, status string)

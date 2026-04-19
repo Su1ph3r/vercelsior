@@ -1,3 +1,3 @@
-module github.com/su1ph/vercelsior
+module github.com/Su1ph3r/vercelsior
 
 go 1.26.1

@@ -4,7 +4,7 @@
 
 [![CI](https://github.com/Su1ph3r/vercelsior/actions/workflows/ci.yml/badge.svg)](https://github.com/Su1ph3r/vercelsior/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Go Report Card](https://goreportcard.com/badge/github.com/su1ph/vercelsior)](https://goreportcard.com/report/github.com/su1ph/vercelsior)
+[![Go Report Card](https://goreportcard.com/badge/github.com/Su1ph3r/vercelsior)](https://goreportcard.com/report/github.com/Su1ph3r/vercelsior)
 
 Vercelsior is to Vercel what [Prowler](https://github.com/prowler-cloud/prowler) is to AWS and [ScoutSuite](https://github.com/nccgroup/ScoutSuite) is to multi-cloud. It audits your Vercel account, team, and project configurations for security misconfigurations, compliance gaps, and attack surface exposure.
 
@@ -52,17 +52,17 @@ Every finding includes:
 ### Go Install
 
 ```sh
-go install github.com/su1ph/vercelsior/cmd/vercelsior@latest
+go install github.com/Su1ph3r/vercelsior/cmd/vercelsior@latest
 ```
 
 ### Binary Download
 
-Pre-built binaries for Linux (amd64/arm64), macOS (amd64/arm64), and Windows (amd64) are available on the [Releases](https://github.com/su1ph/vercelsior/releases) page.
+Pre-built binaries for Linux (amd64/arm64), macOS (amd64/arm64), and Windows (amd64) are available on the [Releases](https://github.com/Su1ph3r/vercelsior/releases) page.
 
 ### Build From Source
 
 ```sh
-git clone https://github.com/su1ph/vercelsior.git
+git clone https://github.com/Su1ph3r/vercelsior.git
 cd vercelsior
 go build -o vercelsior ./cmd/vercelsior/
 ```
@@ -253,7 +253,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Install
-        run: go install github.com/su1ph/vercelsior/cmd/vercelsior@latest
+        run: go install github.com/Su1ph3r/vercelsior/cmd/vercelsior@latest
 
       - name: Scan
         env:

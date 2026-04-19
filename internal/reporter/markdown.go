@@ -5,7 +5,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/su1ph/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/models"
 )
 
 func WriteMarkdown(result *models.ScanResult, path string) error {

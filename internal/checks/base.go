@@ -4,8 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 
-	"github.com/su1ph/vercelsior/internal/client"
-	"github.com/su1ph/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/client"
+	"github.com/Su1ph3r/vercelsior/internal/models"
 )
 
 // Check is the interface all audit check modules must implement.

@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/su1ph/vercelsior/internal/config"
+	"github.com/Su1ph3r/vercelsior/internal/config"
 )
 
 func TestConfigLoadMissingFile(t *testing.T) {
