@@ -12,7 +12,7 @@ Single binary. Zero dependencies. Linux, macOS, Windows.
 
 ## What It Finds
 
-**140+ security checks** across **20 categories**:
+**139 security checks** across **20 categories**:
 
 - Leaked API tokens, tokens without expiration, overprivileged scopes
 - Disabled WAF/firewall, missing OWASP rules, no rate limiting

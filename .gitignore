@@ -5,3 +5,8 @@ reports/
 test/fixtures/baseline/
 test/output*/
 !test/fixtures/.gitkeep
+
+# Office temp / lock files
+~$*
+*.swp
+.DS_Store
