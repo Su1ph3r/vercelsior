@@ -43,11 +43,23 @@ func (r *RollingReleaseChecks) Run(c *client.Client) []models.Finding {
 
 		config, err := c.GetRollingReleaseConfig(projID)
 		if err != nil {
-			if IsPermissionDenied(err) && !permSeen["GetRollingReleaseConfig"] {
-				permSeen["GetRollingReleaseConfig"] = true
-				findings = append(findings, permissionFinding(
-					"rol-001", "Rolling Release Check — Insufficient Permissions", catRolling,
-					"Cannot read rolling release configuration: API token lacks required permissions. This check was skipped for all projects.",
+			if IsPermissionDenied(err) {
+				if !permSeen["GetRollingReleaseConfig"] {
+					permSeen["GetRollingReleaseConfig"] = true
+					// Emit the canonical roll-001 (not the legacy rol-001
+					// typo) so suppression/filtering works as users expect.
+					// Legacy configs that write rol-001 still match, via the
+					// alias in config.canonicalCheckID.
+					findings = append(findings, permissionFinding(
+						"roll-001", "Rolling Release Check — Insufficient Permissions", catRolling,
+						"Cannot read rolling release configuration: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
+			} else if !permSeen["GetRollingReleaseConfig_err"] {
+				permSeen["GetRollingReleaseConfig_err"] = true
+				findings = append(findings, apiErrorFinding(
+					"roll-001", "Rolling Release Check Failed", catRolling,
+					"project", projID, projName, err,
 				))
 			}
 			continue

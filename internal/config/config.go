@@ -6,6 +6,34 @@ import (
 	"strings"
 )
 
+// checkIDAliases maps historical or typo-variant CheckIDs to their canonical
+// IDs. Users may still write the legacy ID in their config file or on the
+// --checks / --skip-checks CLI flag; the legacy form must continue to match
+// the canonical ID that check modules now emit.
+//
+// Only add entries here; never remove. Removing an alias silently breaks user
+// configs that reference the legacy form.
+var checkIDAliases = map[string]string{
+	// Infrastructure: static IP permission finding previously emitted inf-030
+	// while the rest of the module used infra-040.
+	"inf-030": "infra-040",
+	// Rolling releases: permission finding previously emitted rol-001 while
+	// the rest of the module used roll-001.
+	"rol-001": "roll-001",
+	// Sandbox: inner permission finding previously emitted sbx-001 while the
+	// rest of the module used sand-001.
+	"sbx-001": "sand-001",
+}
+
+// canonicalCheckID returns the canonical form of a possibly-legacy CheckID.
+// Unknown IDs are returned unchanged.
+func canonicalCheckID(id string) string {
+	if canonical, ok := checkIDAliases[id]; ok {
+		return canonical
+	}
+	return id
+}
+
 type Config struct {
 	Suppress       map[string]bool
 	MinSeverity    string
@@ -55,13 +83,13 @@ func Load(path string) (*Config, error) {
 
 		switch key {
 		case "suppress":
-			cfg.Suppress[val] = true
+			cfg.Suppress[canonicalCheckID(val)] = true
 		case "min_severity":
 			cfg.MinSeverity = strings.ToUpper(val)
 		case "check":
-			cfg.Checks[val] = true
+			cfg.Checks[canonicalCheckID(val)] = true
 		case "skip_check":
-			cfg.SkipChecks[val] = true
+			cfg.SkipChecks[canonicalCheckID(val)] = true
 		case "category":
 			cfg.Categories[val] = true
 		case "skip_category":
@@ -72,14 +100,15 @@ func Load(path string) (*Config, error) {
 }
 
 func (c *Config) IsSuppressed(checkID string) bool {
-	return c.Suppress[checkID]
+	return c.Suppress[canonicalCheckID(checkID)]
 }
 
 func (c *Config) IsCheckAllowed(checkID string) bool {
+	id := canonicalCheckID(checkID)
 	if len(c.Checks) > 0 {
-		return c.Checks[checkID]
+		return c.Checks[id]
 	}
-	return !c.SkipChecks[checkID]
+	return !c.SkipChecks[id]
 }
 
 func (c *Config) IsCategoryAllowed(category string) bool {
@@ -116,10 +145,10 @@ func (c *Config) Merge(minSev string, checks, skipChecks, categories []string) {
 		c.MinSeverity = strings.ToUpper(minSev)
 	}
 	for _, ch := range checks {
-		c.Checks[ch] = true
+		c.Checks[canonicalCheckID(ch)] = true
 	}
 	for _, ch := range skipChecks {
-		c.SkipChecks[ch] = true
+		c.SkipChecks[canonicalCheckID(ch)] = true
 	}
 	for _, cat := range categories {
 		c.Categories[cat] = true

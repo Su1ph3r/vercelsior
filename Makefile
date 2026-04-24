@@ -1,5 +1,5 @@
 BINARY := vercelsior
-VERSION := 0.1.3
+VERSION := 0.1.4
 LDFLAGS := -s -w
 
 .PHONY: build clean test all

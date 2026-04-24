@@ -94,11 +94,18 @@ func (r *RouteChecks) Run(c *client.Client) []models.Finding {
 		// route-001: Open Redirect in Bulk Redirects (per-project)
 		redirects, err := c.ListBulkRedirects(projID)
 		if err != nil {
-			if IsPermissionDenied(err) && !permSeen["ListBulkRedirects"] {
-				permSeen["ListBulkRedirects"] = true
-				findings = append(findings, permissionFinding(
-					"route-001", "Bulk Redirects Check — Insufficient Permissions", catRoutes,
-					"Cannot list bulk redirects: API token lacks required permissions. This check was skipped for all projects.",
+			if IsPermissionDenied(err) {
+				if !permSeen["ListBulkRedirects"] {
+					permSeen["ListBulkRedirects"] = true
+					findings = append(findings, permissionFinding(
+						"route-001", "Bulk Redirects Check — Insufficient Permissions", catRoutes,
+						"Cannot list bulk redirects: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
+			} else {
+				findings = append(findings, apiErrorFinding(
+					"route-001", "Bulk Redirects Check Failed", catRoutes,
+					"project", projID, projName, err,
 				))
 			}
 		}

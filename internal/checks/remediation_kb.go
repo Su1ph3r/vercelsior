@@ -200,6 +200,12 @@ var remediationKB = map[string]RemediationEntry{
 			{Title: "Vercel Secure Compute", URL: "https://vercel.com/docs/security/secure-compute", Type: "documentation"},
 		},
 	},
+	"hdr-000": {
+		PocVerification: `curl -sI https://{domain}`,
+		RemediationResources: []models.RemediationResource{
+			{Title: "Vercel Security Headers", URL: "https://vercel.com/docs/concepts/edge-network/headers#security-headers", Type: "documentation"},
+		},
+	},
 	"hdr-001": {
 		PocVerification: `curl -sI https://{domain} | grep -i content-security-policy`,
 		RemediationCommands: []models.RemediationCommand{

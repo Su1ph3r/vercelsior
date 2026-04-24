@@ -160,6 +160,11 @@ func (nc *NextJSChecks) Run(c *client.Client) []models.Finding {
 				"njs-001", "Shared Env Var Check — Insufficient Permissions", catFramework,
 				"Cannot list shared environment variables: API token lacks required permissions. This check was skipped.",
 			))
+		} else {
+			findings = append(findings, apiErrorFinding(
+				"njs-001", "Shared Env Var Check Failed", catFramework,
+				"shared_env_var", "N/A", "", sharedErr,
+			))
 		}
 	} else {
 		for _, env := range sharedEnvs {
@@ -317,7 +322,22 @@ func (nc *NextJSChecks) checkOutdatedVersion(c *client.Client, projID, projName 
 		break // only need to check the most recent deployment with version info
 	}
 
-	_ = checked
+	// If no deployment exposed a framework version we couldn't evaluate the
+	// CVE matrix at all — record the gap so the report reflects missing
+	// coverage rather than silently implying the project is safe.
+	if !checked {
+		findings = append(findings, models.Finding{
+			CheckID:      "njs-002",
+			Title:        "Next.js Version Not Determined",
+			Category:     catFramework,
+			Severity:     models.Info,
+			Status:       models.Error,
+			Description:  fmt.Sprintf("Project '%s': No recent deployment exposed a Next.js framework version; CVE check skipped.", projName),
+			ResourceType: "project",
+			ResourceID:   projID,
+			ResourceName: projName,
+		})
+	}
 	return findings
 }
 
@@ -369,7 +389,18 @@ func parseVersion(v string) (int, int, int, bool) {
 		if idx := strings.IndexAny(patchStr, "-+"); idx >= 0 {
 			patchStr = patchStr[:idx]
 		}
-		patch, _ = safeParseInt(patchStr)
+		// Empty after prerelease strip (e.g. "1.2.-canary") is acceptable
+		// and treated as patch=0. Non-numeric patches (e.g. "1.2.x") are
+		// not safe to assume — reject the whole version so the caller
+		// skips the CVE comparison rather than incorrectly flagging a
+		// project as running the oldest possible patch.
+		if patchStr != "" {
+			p, ok := safeParseInt(patchStr)
+			if !ok {
+				return 0, 0, 0, false
+			}
+			patch = p
+		}
 	}
 
 	return major, minor, patch, true

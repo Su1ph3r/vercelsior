@@ -204,6 +204,7 @@ Complete reference of all security checks performed by vercelsior.
 
 | Check ID | Title | Status | Severity | Risk Score | Description |
 |----------|-------|--------|----------|------------|-------------|
+| hdr-000 | Header Probe Failed | ERROR | INFO | - | Live HEAD probe against a production domain failed (SSRF guard, DNS, TLS, or timeout). Emitted so the audit gap is visible; does not affect exit code. |
 | hdr-001 | Missing Content-Security-Policy | FAIL | HIGH | 7.0 | No CSP header (requires --live flag). |
 | hdr-002 | Missing Strict-Transport-Security | FAIL | MEDIUM | 6.0 | No HSTS header (requires --live flag). |
 | hdr-003 | Missing X-Frame-Options | WARN | MEDIUM | 6.0 | No clickjacking protection (requires --live flag). |

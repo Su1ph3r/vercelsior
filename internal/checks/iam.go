@@ -300,11 +300,22 @@ func (ic *IAMChecks) checkTeams(c *client.Client) []models.Finding {
 		// Check team members for role distribution
 		members, err := c.ListTeamMembers(teamID)
 		if err != nil {
-			if IsPermissionDenied(err) && !permSeen["ListTeamMembers"] {
-				permSeen["ListTeamMembers"] = true
-				findings = append(findings, permissionFinding(
-					"iam-015", "Team Members Check — Insufficient Permissions", catIAM,
-					"Cannot list team members: API token lacks required permissions. This check was skipped for all teams.",
+			if IsPermissionDenied(err) {
+				if !permSeen["ListTeamMembers"] {
+					permSeen["ListTeamMembers"] = true
+					// CheckID iam-019 (not iam-015) — iam-015 is already
+					// used above for "IP Addresses Visible in Observability".
+					// Reusing it would cause the scanner's CheckID|ResourceID
+					// dedup key to silently merge two distinct findings.
+					findings = append(findings, permissionFinding(
+						"iam-019", "Team Members Check — Insufficient Permissions", catIAM,
+						"Cannot list team members: API token lacks required permissions. This check was skipped for all teams.",
+					))
+				}
+			} else {
+				findings = append(findings, apiErrorFinding(
+					"iam-019", "Team Members Check Failed", catIAM,
+					"team", teamID, teamName, err,
 				))
 			}
 		}

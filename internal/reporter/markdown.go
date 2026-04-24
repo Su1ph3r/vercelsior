@@ -4,9 +4,24 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Su1ph3r/vercelsior/internal/models"
 )
+
+// utf8SafeTruncate cuts s to at most maxBytes while preserving valid UTF-8.
+// A naive byte slice can split a multi-byte rune, producing invalid UTF-8
+// that corrupts downstream rendering (browsers substitute U+FFFD).
+func utf8SafeTruncate(s string, maxBytes int) string {
+	if maxBytes < 0 || len(s) <= maxBytes {
+		return s
+	}
+	trimmed := s[:maxBytes]
+	for len(trimmed) > 0 && !utf8.ValidString(trimmed) {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	return trimmed
+}
 
 func WriteMarkdown(result *models.ScanResult, path string) error {
 	var b strings.Builder
@@ -22,8 +37,8 @@ func WriteMarkdown(result *models.ScanResult, path string) error {
 
 	// Summary
 	b.WriteString("## Summary\n\n")
-	b.WriteString(fmt.Sprintf("| Metric | Count |\n"))
-	b.WriteString(fmt.Sprintf("|--------|-------|\n"))
+	b.WriteString("| Metric | Count |\n")
+	b.WriteString("|--------|-------|\n")
 	b.WriteString(fmt.Sprintf("| Total Checks | %d |\n", result.Summary.Total))
 	b.WriteString(fmt.Sprintf("| Passed | %d |\n", result.Summary.Passed))
 	b.WriteString(fmt.Sprintf("| Failed | %d |\n", result.Summary.Failed))
@@ -94,7 +109,7 @@ func WriteMarkdown(result *models.ScanResult, path string) error {
 					b.WriteString(fmt.Sprintf("  - Request: `%s %s`\n", poc.Request.Method, poc.Request.URL))
 					b.WriteString(fmt.Sprintf("  - Response: %d\n", poc.Response.StatusCode))
 					if len(poc.Response.Body) > 500 {
-						b.WriteString(fmt.Sprintf("  ```json\n  %s\n  ```\n", poc.Response.Body[:500]+"..."))
+						b.WriteString(fmt.Sprintf("  ```json\n  %s...\n  ```\n", utf8SafeTruncate(poc.Response.Body, 500)))
 					} else if poc.Response.Body != "" {
 						b.WriteString(fmt.Sprintf("  ```json\n  %s\n  ```\n", poc.Response.Body))
 					}

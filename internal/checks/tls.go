@@ -176,6 +176,11 @@ func (t *TLSChecks) Run(c *client.Client) []models.Finding {
 				"tls-010", "mTLS Check — Insufficient Permissions", catTLS,
 				"Cannot list projects for mTLS check: API token lacks required permissions. This check was skipped.",
 			))
+		} else {
+			findings = append(findings, apiErrorFinding(
+				"tls-010", "mTLS Project Listing Failed", catTLS,
+				"project", "N/A", "", projErr,
+			))
 		}
 	} else {
 		permSeenTLS := make(map[string]bool)
@@ -198,11 +203,19 @@ func (t *TLSChecks) Run(c *client.Client) []models.Finding {
 			if !hasMTLS {
 				envVars, envErr := c.ListProjectEnvVars(projID)
 				if envErr != nil {
-					if IsPermissionDenied(envErr) && !permSeenTLS["ListProjectEnvVars"] {
-						permSeenTLS["ListProjectEnvVars"] = true
-						findings = append(findings, permissionFinding(
-							"tls-010", "mTLS Env Var Check — Insufficient Permissions", catTLS,
-							"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+					if IsPermissionDenied(envErr) {
+						if !permSeenTLS["ListProjectEnvVars"] {
+							permSeenTLS["ListProjectEnvVars"] = true
+							findings = append(findings, permissionFinding(
+								"tls-010", "mTLS Env Var Check — Insufficient Permissions", catTLS,
+								"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+							))
+						}
+					} else if !permSeenTLS["ListProjectEnvVars_err"] {
+						permSeenTLS["ListProjectEnvVars_err"] = true
+						findings = append(findings, apiErrorFinding(
+							"tls-010", "mTLS Env Var Check Failed", catTLS,
+							"project", projID, projName, envErr,
 						))
 					}
 					continue

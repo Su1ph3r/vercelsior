@@ -30,15 +30,15 @@ func (hc *HeaderChecks) Run(c *client.Client) []models.Finding {
 				"Cannot list projects: API token lacks required permissions. This check was skipped.",
 			))
 		} else {
-			findings = append(findings, models.Finding{
-				CheckID: "hdr-001", Title: "Header Check Failed", Category: catHeaders,
-				Severity: models.Info, Status: models.Error,
-				Description:  fmt.Sprintf("Failed to list projects: %v", err),
-				ResourceType: "project", ResourceID: "N/A",
-			})
+			findings = append(findings, apiErrorFinding(
+				"hdr-001", "Header Check Failed", catHeaders,
+				"project", "N/A", "", err,
+			))
 		}
 		return findings
 	}
+
+	permSeen := make(map[string]bool)
 
 	for _, proj := range projects {
 		projectID := str(proj["id"])
@@ -47,14 +47,40 @@ func (hc *HeaderChecks) Run(c *client.Client) []models.Finding {
 			continue
 		}
 
-		domain := hc.pickProductionDomain(c, projectID)
+		domain, domErr := hc.pickProductionDomain(c, projectID)
+		if domErr != nil {
+			// Emit a per-project error so the gap is visible, but suppress
+			// the permission-denied spam (already surfaced globally via the
+			// permission summary).
+			if IsPermissionDenied(domErr) {
+				if !permSeen["pickProductionDomain"] {
+					permSeen["pickProductionDomain"] = true
+					findings = append(findings, permissionFinding(
+						"hdr-001", "Header Check — Insufficient Permissions", catHeaders,
+						"Cannot list project domains: API token lacks required permissions. Header probes were skipped for affected projects.",
+					))
+				}
+				continue
+			}
+			findings = append(findings, apiErrorFinding(
+				"hdr-000", "Header Probe Unavailable", catHeaders,
+				"project", projectID, projectName, domErr,
+			))
+			continue
+		}
 		if domain == "" {
 			continue
 		}
 
 		headers, err := c.ProbeHeaders("https://" + domain)
 		if err != nil {
-			// Skip domains that fail to probe
+			// hdr-000 records probe failures (SSRF guard, DNS, TLS,
+			// timeout) so the gap is visible in the report instead of
+			// the domain silently disappearing from the audit.
+			findings = append(findings, apiErrorFinding(
+				"hdr-000", "Header Probe Failed", catHeaders,
+				"domain", domain, fmt.Sprintf("%s (%s)", domain, projectName), err,
+			))
 			continue
 		}
 
@@ -180,11 +206,16 @@ func (hc *HeaderChecks) Run(c *client.Client) []models.Finding {
 }
 
 // pickProductionDomain returns the first production domain for a project,
-// or falls back to the first domain available.
-func (hc *HeaderChecks) pickProductionDomain(c *client.Client, projectID string) string {
+// or falls back to the first domain available. An API error is propagated
+// so the caller can emit a visible finding instead of silently skipping the
+// project; an empty string with nil error means "no domains configured".
+func (hc *HeaderChecks) pickProductionDomain(c *client.Client, projectID string) (string, error) {
 	domains, err := c.ListProjectDomains(projectID)
-	if err != nil || len(domains) == 0 {
-		return ""
+	if err != nil {
+		return "", err
+	}
+	if len(domains) == 0 {
+		return "", nil
 	}
 
 	// Prefer a production domain (one without a git branch configured)
@@ -195,10 +226,10 @@ func (hc *HeaderChecks) pickProductionDomain(c *client.Client, projectID string)
 		}
 		branch := str(d["gitBranch"])
 		if branch == "" {
-			return name
+			return name, nil
 		}
 	}
 
 	// Fall back to the first domain
-	return str(domains[0]["name"])
+	return str(domains[0]["name"]), nil
 }

@@ -84,12 +84,13 @@ func (tc *TakeoverChecks) checkDanglingCNAME(c *client.Client, projectDomains ma
 				"Cannot list domains: API token lacks required permissions. This check was skipped.",
 			))
 		} else {
-			findings = append(findings, models.Finding{
-				CheckID: "sto-001", Title: "Takeover Check Failed", Category: catTakeover,
-				Severity: models.Info, Status: models.Error,
-				Description:  fmt.Sprintf("Failed to list domains: %v", err),
-				ResourceType: "domain", ResourceID: "N/A",
-			})
+			// Distinct CheckID so the error finding does not collide with
+			// sto-001 fail/pass findings under the same ResourceID ("N/A")
+			// in the scanner's dedup pass.
+			findings = append(findings, apiErrorFinding(
+				"sto-001-error", "Dangling CNAME Check Failed", catTakeover,
+				"domain", "N/A", "", err,
+			))
 		}
 		return findings
 	}

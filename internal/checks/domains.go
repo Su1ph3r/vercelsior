@@ -218,12 +218,13 @@ func (dc *DomainChecks) checkProjectDomains(c *client.Client) []models.Finding {
 		for _, d := range domains {
 			name := str(d["name"])
 
-			// Check redirect configuration
+			// Check redirect configuration. A missing redirectStatusCode
+			// field (num→0) means "not configured" — treat it the same as
+			// no redirect rather than incorrectly flagging a "0 redirect"
+			// as non-permanent.
 			redirect := str(d["redirect"])
 			redirectStatusCode := int(num(d["redirectStatusCode"]))
-			if redirect != "" && redirectStatusCode == 301 {
-				// 301 is fine, just informational
-			} else if redirect != "" && redirectStatusCode != 301 && redirectStatusCode != 308 {
+			if redirect != "" && redirectStatusCode != 0 && redirectStatusCode != 301 && redirectStatusCode != 308 {
 				findings = append(findings, warn(
 					"dom-011", "Non-Permanent Domain Redirect", catDomains, models.Low,
 					1.0, "Non-permanent redirects are an SEO and caching concern. Minimal security impact.",

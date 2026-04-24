@@ -282,13 +282,21 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 		// Check: bypass rules
 		bypass, bypassErr := c.GetFirewallBypass(projID)
 		if bypassErr != nil {
-			if IsPermissionDenied(bypassErr) && !permSeen["GetFirewallBypass"] {
-				permSeen["GetFirewallBypass"] = true
-				findings = append(findings, permissionFinding(
-					"fw-020", "Firewall Bypass Check — Insufficient Permissions", catFirewall,
-					"Cannot read firewall bypass rules: API token lacks required permissions. This check was skipped for all projects.",
+			if IsPermissionDenied(bypassErr) {
+				if !permSeen["GetFirewallBypass"] {
+					permSeen["GetFirewallBypass"] = true
+					findings = append(findings, permissionFinding(
+						"fw-020", "Firewall Bypass Check — Insufficient Permissions", catFirewall,
+						"Cannot read firewall bypass rules: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
+			} else {
+				findings = append(findings, apiErrorFinding(
+					"fw-020", "Firewall Bypass Check Failed", catFirewall,
+					"project", projID, projName, bypassErr,
 				))
 			}
+			// bypass is nil on error; fall through to the nil-check below.
 		}
 		if bypass != nil {
 			if rules, ok := bypass["rules"].([]interface{}); ok && len(rules) > 0 {

@@ -161,6 +161,11 @@ func (gc *GitChecks) checkProtectedGitScopes(c *client.Client) []models.Finding 
 				"git-002", "Protected Git Scopes Check — Insufficient Permissions", catGit,
 				"Cannot list teams: API token lacks required permissions. This check was skipped.",
 			))
+		} else {
+			findings = append(findings, apiErrorFinding(
+				"git-002", "Protected Git Scopes Check Failed", catGit,
+				"team", "N/A", "", err,
+			))
 		}
 		return findings
 	}

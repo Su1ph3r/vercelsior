@@ -13,7 +13,7 @@ import (
 	"github.com/Su1ph3r/vercelsior/internal/scanner"
 )
 
-const version = "0.1.2"
+const version = "0.1.4"
 
 var (
 	colorReset  = "\033[0m"
@@ -112,7 +112,10 @@ func main() {
 	}
 	fmt.Printf("%s[+]%s Authenticated as: %s%s%s\n\n", colorGreen, colorReset, colorBold, username, colorReset)
 
-	scanID := fmt.Sprintf("vercelsior-%d", time.Now().Unix())
+	// Nanosecond precision prevents collisions when two scans start in the
+	// same second (CI parallelism, rapid re-runs), which would otherwise
+	// cause the second scan's reports to silently overwrite the first's.
+	scanID := fmt.Sprintf("vercelsior-%d", time.Now().UnixNano())
 
 	s := scanner.New(c, cfg, func(checkName, status string) {
 		icon := colorCyan + "[*]" + colorReset
@@ -146,7 +149,9 @@ func main() {
 	if outDir == "" {
 		outDir = "."
 	}
-	os.MkdirAll(outDir, 0755)
+	if err := os.MkdirAll(outDir, 0755); err != nil {
+		fatal("Failed to create output directory %s: %v", outDir, err)
+	}
 
 	formats := args.formats
 	if len(formats) == 0 {
@@ -187,8 +192,12 @@ func main() {
 		} else {
 			diffMDPath := fmt.Sprintf("%s/%s-diff.md", outDir, scanID)
 			diffJSONPath := fmt.Sprintf("%s/%s-diff.json", outDir, scanID)
-			reporter.WriteDiffMarkdown(diff, diffMDPath)
-			reporter.WriteDiffJSON(diff, diffJSONPath)
+			if err := reporter.WriteDiffMarkdown(diff, diffMDPath); err != nil {
+				fmt.Printf("  %s[-]%s Failed to write diff markdown: %v\n", colorRed, colorReset, err)
+			}
+			if err := reporter.WriteDiffJSON(diff, diffJSONPath); err != nil {
+				fmt.Printf("  %s[-]%s Failed to write diff JSON: %v\n", colorRed, colorReset, err)
+			}
 
 			// Print diff summary to terminal
 			changeIcon := "+"

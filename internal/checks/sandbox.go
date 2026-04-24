@@ -43,11 +43,22 @@ func (s *SandboxChecks) Run(c *client.Client) []models.Finding {
 
 		sandboxes, err := c.ListSandboxes(projID)
 		if err != nil {
-			if IsPermissionDenied(err) && !permSeen["ListSandboxes"] {
-				permSeen["ListSandboxes"] = true
-				findings = append(findings, permissionFinding(
-					"sbx-001", "Sandbox Check — Insufficient Permissions", catSandbox,
-					"Cannot list sandboxes: API token lacks required permissions. This check was skipped for all projects.",
+			if IsPermissionDenied(err) {
+				if !permSeen["ListSandboxes"] {
+					permSeen["ListSandboxes"] = true
+					// Canonical sand-001 (not the legacy sbx-001 typo).
+					// Legacy configs still match via config.canonicalCheckID.
+					findings = append(findings, permissionFinding(
+						"sand-001", "Sandbox Check — Insufficient Permissions", catSandbox,
+						"Cannot list sandboxes: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
+			} else if !permSeen["ListSandboxes_err"] {
+				permSeen["ListSandboxes_err"] = true
+				projName := str(p["name"])
+				findings = append(findings, apiErrorFinding(
+					"sand-001", "Sandbox Check Failed", catSandbox,
+					"project", projID, projName, err,
 				))
 			}
 			continue

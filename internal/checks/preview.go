@@ -127,11 +127,18 @@ func (pc *PreviewChecks) Run(c *client.Client) []models.Finding {
 		// Check: VERCEL_AUTOMATION_BYPASS_SECRET in env vars
 		envVars, envErr := c.ListProjectEnvVars(projID)
 		if envErr != nil {
-			if IsPermissionDenied(envErr) && !permSeen["ListProjectEnvVars"] {
-				permSeen["ListProjectEnvVars"] = true
-				findings = append(findings, permissionFinding(
-					"prev-001", "Preview Env Var Check — Insufficient Permissions", catPreview,
-					"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+			if IsPermissionDenied(envErr) {
+				if !permSeen["ListProjectEnvVars"] {
+					permSeen["ListProjectEnvVars"] = true
+					findings = append(findings, permissionFinding(
+						"prev-001", "Preview Env Var Check — Insufficient Permissions", catPreview,
+						"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
+			} else {
+				findings = append(findings, apiErrorFinding(
+					"prev-001", "Preview Env Var Check Failed", catPreview,
+					"project", projID, projName, envErr,
 				))
 			}
 		}
@@ -155,8 +162,10 @@ func (pc *PreviewChecks) Run(c *client.Client) []models.Finding {
 		// prev-005: Ignored Build Step not configured (monorepo optimization)
 		link := mapVal(p["link"])
 		if link != nil {
-			// In monorepos, projects should configure ignoredBuildStep to prevent unnecessary deploys
-			rootDir := str(p["rootDirectory"])
+			// In monorepos, projects should configure ignoredBuildStep to
+			// prevent unnecessary deploys. Reuse the outer rootDir —
+			// previously an inner shadowing declaration hid the outer
+			// binding from static-analysis tools.
 			if rootDir != "" && rootDir != "." && rootDir != "/" {
 				// Project has a subdirectory root, suggesting monorepo usage
 				ignoredBuildStep := p["skipDeploymentsForNewChanges"]

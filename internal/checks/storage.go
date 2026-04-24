@@ -62,11 +62,19 @@ func (sc *StorageChecks) Run(c *client.Client) []models.Finding {
 
 		envVars, err := c.ListProjectEnvVars(projID)
 		if err != nil {
-			if IsPermissionDenied(err) && !permSeen["ListProjectEnvVars"] {
-				permSeen["ListProjectEnvVars"] = true
-				findings = append(findings, permissionFinding(
-					"sto-010", "Storage Check — Insufficient Permissions", catStorage,
-					"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+			if IsPermissionDenied(err) {
+				if !permSeen["ListProjectEnvVars"] {
+					permSeen["ListProjectEnvVars"] = true
+					findings = append(findings, permissionFinding(
+						"sto-010", "Storage Check — Insufficient Permissions", catStorage,
+						"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+					))
+				}
+			} else if !permSeen["ListProjectEnvVars_err"] {
+				permSeen["ListProjectEnvVars_err"] = true
+				findings = append(findings, apiErrorFinding(
+					"sto-010", "Storage Check — Env Var Listing Failed", catStorage,
+					"project", projID, projName, err,
 				))
 			}
 			continue
@@ -93,10 +101,15 @@ func (sc *StorageChecks) Run(c *client.Client) []models.Finding {
 
 		// stor-001: Vercel Storage Without IP Restrictions
 		if hasStorageVars {
-			trustedIps := mapVal(p["trustedIps"])
-			hasTrustedIPs := trustedIps != nil
-			if addrs, ok := trustedIps["addresses"].([]interface{}); ok {
-				hasTrustedIPs = len(addrs) > 0
+			// hasTrustedIPs is only true when the project has a non-empty
+			// addresses list. A non-nil but empty trustedIps object (e.g.
+			// {"protectionMode": "additional"} with no addresses) does NOT
+			// grant IP protection and must not suppress the stor-001 finding.
+			hasTrustedIPs := false
+			if trustedIps := mapVal(p["trustedIps"]); trustedIps != nil {
+				if addrs, ok := trustedIps["addresses"].([]interface{}); ok && len(addrs) > 0 {
+					hasTrustedIPs = true
+				}
 			}
 
 			// Check for secure compute

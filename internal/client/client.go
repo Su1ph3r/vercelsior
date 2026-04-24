@@ -1,6 +1,7 @@
 package client
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 )
 
 // ErrPermissionDenied is returned when the API returns HTTP 403.
@@ -38,6 +40,13 @@ type Client struct {
 	permMu           sync.Mutex
 	evidenceLog      []APIEvidence
 	evidenceMu       sync.Mutex
+
+	// probeClient is a lazily-initialized HTTP client used by ProbeHeaders.
+	// Sharing a single client across all probes (instead of building a fresh
+	// http.Transport per call) avoids leaking idle sockets and read-loop
+	// goroutines scaled to the number of projects in a scan.
+	probeOnce   sync.Once
+	probeClient *http.Client
 }
 
 func New(token string, teamID string, teamSlug string) *Client {
@@ -120,10 +129,7 @@ func (c *Client) request(method, path string, params map[string]string) (json.Ra
 			return nil, nil
 		}
 		if resp.StatusCode >= 400 {
-			msg := string(body)
-			if len(msg) > 500 {
-				msg = msg[:500]
-			}
+			msg := utf8SafeTruncateString(string(body), 500)
 			return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, msg)
 		}
 		if resp.StatusCode == 204 || len(body) == 0 {
@@ -140,13 +146,19 @@ func (c *Client) Get(path string, params map[string]string) (json.RawMessage, er
 
 // GetPaginated fetches all pages from a paginated Vercel API endpoint.
 // dataKey is the JSON key containing the array of items.
+//
+// The caller's params map is never mutated: a local copy is used for the
+// pagination cursor so reusing a params map across calls to different
+// endpoints does not leak an `until` cursor into the next request.
 func (c *Client) GetPaginated(path, dataKey string, params map[string]string) ([]json.RawMessage, error) {
-	if params == nil {
-		params = make(map[string]string)
+	local := make(map[string]string, len(params)+1)
+	for k, v := range params {
+		local[k] = v
 	}
-	if _, ok := params["limit"]; !ok {
-		params["limit"] = "100"
+	if _, ok := local["limit"]; !ok {
+		local["limit"] = "100"
 	}
+	params = local
 	var all []json.RawMessage
 
 	for {
@@ -324,7 +336,7 @@ func (c *Client) ListWebhooks() ([]map[string]interface{}, error) {
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "webhooks")
 }
 
 func (c *Client) ListLogDrains() ([]map[string]interface{}, error) {
@@ -332,14 +344,8 @@ func (c *Client) ListLogDrains() ([]map[string]interface{}, error) {
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	// Response may be array directly or {drains: [...]}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if drains, ok := resp["drains"]; ok {
-			return toSliceOfMaps(drains), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	// Response may be a raw array or an object {"drains": [...]}.
+	return parseListResponse(raw, "drains")
 }
 
 func (c *Client) ListIntegrations() ([]map[string]interface{}, error) {
@@ -351,13 +357,7 @@ func (c *Client) ListEdgeConfigs() ([]map[string]interface{}, error) {
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if items, ok := resp["items"]; ok {
-			return toSliceOfMaps(items), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "items")
 }
 
 func (c *Client) ListEdgeConfigTokens(edgeConfigID string) ([]map[string]interface{}, error) {
@@ -365,13 +365,7 @@ func (c *Client) ListEdgeConfigTokens(edgeConfigID string) ([]map[string]interfa
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if tokens, ok := resp["tokens"]; ok {
-			return toSliceOfMaps(tokens), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "tokens")
 }
 
 func (c *Client) ListAccessGroups() ([]map[string]interface{}, error) {
@@ -387,13 +381,7 @@ func (c *Client) ListSecureComputeNetworks() ([]map[string]interface{}, error) {
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if nets, ok := resp["networks"]; ok {
-			return toSliceOfMaps(nets), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "networks")
 }
 
 func (c *Client) ListSharedEnvVars() ([]map[string]interface{}, error) {
@@ -401,17 +389,8 @@ func (c *Client) ListSharedEnvVars() ([]map[string]interface{}, error) {
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		// API returns "data" key, not "envs"
-		if data, ok := resp["data"]; ok {
-			return toSliceOfMaps(data), nil
-		}
-		if envs, ok := resp["envs"]; ok {
-			return toSliceOfMaps(envs), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	// Vercel migrated from "envs" to "data" at some point; accept both.
+	return parseListResponse(raw, "data", "envs")
 }
 
 func (c *Client) GetArtifactsStatus() (map[string]interface{}, error) {
@@ -428,13 +407,7 @@ func (c *Client) ListCertificates() ([]map[string]interface{}, error) {
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if certs, ok := resp["certs"]; ok {
-			return toSliceOfMaps(certs), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "certs")
 }
 
 func (c *Client) ListFeatureFlags(projectID string) ([]map[string]interface{}, error) {
@@ -446,13 +419,7 @@ func (c *Client) ListBulkRedirects(projectID string) ([]map[string]interface{}, 
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if redirects, ok := resp["redirects"]; ok {
-			return toSliceOfMaps(redirects), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "redirects")
 }
 
 func (c *Client) ListProjectRoutes(projectID string) ([]map[string]interface{}, error) {
@@ -460,13 +427,7 @@ func (c *Client) ListProjectRoutes(projectID string) ([]map[string]interface{}, 
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if routes, ok := resp["routes"]; ok {
-			return toSliceOfMaps(routes), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "routes")
 }
 
 func (c *Client) ListSandboxes(projectID string) ([]map[string]interface{}, error) {
@@ -474,13 +435,7 @@ func (c *Client) ListSandboxes(projectID string) ([]map[string]interface{}, erro
 	if err != nil || raw == nil {
 		return nil, err
 	}
-	var resp map[string]interface{}
-	if err := json.Unmarshal(raw, &resp); err == nil {
-		if items, ok := resp["sandboxes"]; ok {
-			return toSliceOfMaps(items), nil
-		}
-	}
-	return rawToSliceOfMaps(raw)
+	return parseListResponse(raw, "sandboxes")
 }
 
 func (c *Client) ListDeploymentChecks(deploymentID string) ([]map[string]interface{}, error) {
@@ -500,7 +455,7 @@ func (c *Client) logEvidence(method, path string, status int, body string) {
 	c.evidenceMu.Lock()
 	defer c.evidenceMu.Unlock()
 	if len(body) > 50000 {
-		body = body[:50000] + "...[truncated]"
+		body = utf8SafeTruncateString(body, 50000) + "...[truncated]"
 	}
 	c.evidenceLog = append(c.evidenceLog, APIEvidence{
 		Method: method, Path: path, StatusCode: status, Body: body,
@@ -509,6 +464,20 @@ func (c *Client) logEvidence(method, path string, status int, body string) {
 	if len(c.evidenceLog) > 200 {
 		c.evidenceLog = c.evidenceLog[len(c.evidenceLog)-200:]
 	}
+}
+
+// utf8SafeTruncateString cuts s to at most maxBytes while preserving valid
+// UTF-8. A raw byte slice can split a multi-byte rune; the error message or
+// evidence body would then appear as U+FFFD characters in reports.
+func utf8SafeTruncateString(s string, maxBytes int) string {
+	if maxBytes < 0 || len(s) <= maxBytes {
+		return s
+	}
+	trimmed := s[:maxBytes]
+	for len(trimmed) > 0 && !utf8.ValidString(trimmed) {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	return trimmed
 }
 
 // GetEvidence returns evidence for a specific API path (most recent match).
@@ -557,11 +526,19 @@ func (c *Client) getPaginatedMaps(path, dataKey string, params map[string]string
 		return nil, err
 	}
 	result := make([]map[string]interface{}, 0, len(raws))
+	skipped := 0
 	for _, r := range raws {
 		var m map[string]interface{}
-		if err := json.Unmarshal(r, &m); err == nil {
-			result = append(result, m)
+		if err := json.Unmarshal(r, &m); err != nil {
+			skipped++
+			continue
 		}
+		result = append(result, m)
+	}
+	if skipped > 0 {
+		// Don't fail the whole list (single bad items shouldn't sink an entire
+		// audit) but log once so the skip is not fully invisible.
+		log.Printf("Warning: %d item(s) from %s failed to parse and were skipped", skipped, path)
 	}
 	return result, nil
 }
@@ -579,53 +556,162 @@ func toSliceOfMaps(v interface{}) []map[string]interface{} {
 	return nil
 }
 
-func rawToSliceOfMaps(raw json.RawMessage) ([]map[string]interface{}, error) {
-	var arr []map[string]interface{}
-	if err := json.Unmarshal(raw, &arr); err != nil {
-		return nil, err
+// parseListResponse decodes raw as either a JSON array of items or an object
+// whose value at one of the supplied keys is the item array. An empty body
+// returns (nil, nil). Any parse failure or unrecognized shape returns an
+// error — callers get a real failure instead of an empty list that hides a
+// malformed API response.
+func parseListResponse(raw json.RawMessage, dataKeys ...string) ([]map[string]interface{}, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, nil
 	}
-	return arr, nil
+	if trimmed[0] == '[' {
+		var arr []map[string]interface{}
+		if err := json.Unmarshal(trimmed, &arr); err != nil {
+			return nil, fmt.Errorf("parsing array response: %w", err)
+		}
+		return arr, nil
+	}
+	if trimmed[0] == '{' {
+		var obj map[string]interface{}
+		if err := json.Unmarshal(trimmed, &obj); err != nil {
+			return nil, fmt.Errorf("parsing object response: %w", err)
+		}
+		for _, key := range dataKeys {
+			if items, ok := obj[key]; ok {
+				return toSliceOfMaps(items), nil
+			}
+		}
+		return nil, fmt.Errorf("response object does not contain any of the expected keys %v", dataKeys)
+	}
+	return nil, fmt.Errorf("unexpected response shape: neither array nor object")
+}
+
+// isDisallowedProbeIP reports whether the given IP is in a range that the
+// SSRF guard must refuse: loopback, private, link-local, multicast, or the
+// unspecified address (0.0.0.0 / ::). The 169.254.169.254 cloud metadata
+// endpoint is already covered by IsLinkLocalUnicast, but we check it
+// explicitly as belt-and-braces.
+func isDisallowedProbeIP(ip net.IP) bool {
+	if ip == nil {
+		return true
+	}
+	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
+		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
+		return true
+	}
+	return false
+}
+
+// getProbeClient returns a shared http.Client used for header probes in
+// --live mode. The client is built once per Client and reused across all
+// ProbeHeaders calls, so per-call transport allocation does not leak idle
+// sockets or background goroutines scaled to the number of projects.
+//
+// The dialer resolves the host exactly once per connection and then dials
+// the already-validated IP directly. This closes the DNS-rebinding TOCTOU
+// gap that exists when the SSRF check and the underlying net.Dial each
+// perform their own independent resolution. TLS ServerName (and the Host
+// header) continue to carry the original hostname so virtual-host routing
+// and certificate validation work normally.
+//
+// Redirects are not followed (CheckRedirect returns ErrUseLastResponse)
+// because a 30x redirect would re-enter net/http's dialer for the new host
+// without our pinned-IP logic, and because a probe that silently follows
+// off-host redirects can leak response headers from internal targets.
+func (c *Client) getProbeClient() *http.Client {
+	c.probeOnce.Do(func() {
+		dialer := &net.Dialer{Timeout: 10 * time.Second}
+		transport := &http.Transport{
+			// Keep the per-Client pool small — we make at most one HEAD per
+			// project and want idle conns to expire quickly.
+			MaxIdleConns:          10,
+			MaxIdleConnsPerHost:   2,
+			IdleConnTimeout:       30 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ResponseHeaderTimeout: 10 * time.Second,
+			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+				host, port, err := net.SplitHostPort(addr)
+				if err != nil {
+					return nil, fmt.Errorf("invalid address %s: %w", addr, err)
+				}
+				ips, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+				if err != nil {
+					return nil, fmt.Errorf("DNS lookup failed for %s: %w", host, err)
+				}
+				if len(ips) == 0 {
+					return nil, fmt.Errorf("no IPs resolved for %s", host)
+				}
+				// Reject if ANY resolved IP is disallowed. A legitimate host
+				// should never resolve to a private IP; refusing the whole
+				// lookup prevents a round-robin rebind from sneaking an
+				// internal address into the pool.
+				for _, ip := range ips {
+					if isDisallowedProbeIP(ip.IP) {
+						return nil, fmt.Errorf("blocked request to private/reserved IP %s for host %s", ip.IP, host)
+					}
+				}
+				// Dial the first validated IP directly so the connection
+				// cannot re-resolve and land on a different address. The
+				// SNI/Host preservation is handled by the caller via
+				// tls.Config.ServerName and req.Host, which default to the
+				// original hostname from the URL.
+				return dialer.DialContext(ctx, network, net.JoinHostPort(ips[0].IP.String(), port))
+			},
+		}
+		c.probeClient = &http.Client{
+			Timeout:   10 * time.Second,
+			Transport: transport,
+			// Don't follow redirects: the pinned-IP dialer only makes sense
+			// for the hostname the caller validated; following a redirect
+			// to a different host bypasses the caller's intent and opens a
+			// second TOCTOU window.
+			CheckRedirect: func(req *http.Request, via []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		}
+	})
+	return c.probeClient
 }
 
 // ProbeHeaders performs a HEAD request against the given URL and returns
 // the response headers as a lowercase key -> value map.
-// Blocks requests to private/reserved IP ranges to prevent SSRF.
+// Blocks requests to private/reserved IP ranges to prevent SSRF, including
+// DNS-rebinding attacks where a hostile authoritative DNS server returns
+// a public IP on the first lookup and an internal IP on the second.
 func (c *Client) ProbeHeaders(targetURL string) (map[string]string, error) {
-	dialer := &net.Dialer{Timeout: 10 * time.Second}
-	hc := &http.Client{
-		Timeout: 10 * time.Second,
-		Transport: &http.Transport{
-			DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-				host, _, err := net.SplitHostPort(addr)
-				if err != nil {
-					return nil, fmt.Errorf("invalid address %s: %w", addr, err)
-				}
-				ips, err := net.LookupIP(host)
-				if err != nil {
-					return nil, fmt.Errorf("DNS lookup failed for %s: %w", host, err)
-				}
-				for _, ip := range ips {
-					if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
-						return nil, fmt.Errorf("blocked request to private/reserved IP %s for host %s", ip, host)
-					}
-				}
-				return dialer.DialContext(ctx, network, addr)
-			},
-		},
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing probe URL %q: %w", targetURL, err)
 	}
-	req, err := http.NewRequest("HEAD", targetURL, nil)
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("probe URL must be http or https, got %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("probe URL has no host")
+	}
+
+	req, err := http.NewRequest(http.MethodHead, targetURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("creating probe request: %w", err)
 	}
 	req.Header.Set("User-Agent", "vercelsior-security-scanner")
+	// TLS SNI and the HTTP Host header are derived by net/http from the
+	// request's URL.Host; the dialer's pinned-IP connection still gets the
+	// original hostname presented during the TLS handshake, so certificate
+	// validation works correctly.
 
-	resp, err := hc.Do(req)
+	resp, err := c.getProbeClient().Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("probing %s: %w", targetURL, err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+	// HEAD responses have no body, but some servers ignore that. Drain
+	// any bytes so the connection can return to the idle pool cleanly.
+	_, _ = io.Copy(io.Discard, resp.Body)
 
-	headers := make(map[string]string)
+	headers := make(map[string]string, len(resp.Header))
 	for k, v := range resp.Header {
 		if len(v) > 0 {
 			headers[strings.ToLower(k)] = v[0]

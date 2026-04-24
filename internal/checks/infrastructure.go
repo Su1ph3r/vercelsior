@@ -298,11 +298,21 @@ func (ic *InfrastructureChecks) checkStaticIPs(c *client.Client) []models.Findin
 			// Simple heuristic: if project has env vars suggesting backend connections, flag it
 			envVars, err := c.ListProjectEnvVars(projID)
 			if err != nil {
-				if IsPermissionDenied(err) && !permSeenStatic["ListProjectEnvVars"] {
-					permSeenStatic["ListProjectEnvVars"] = true
-					findings = append(findings, permissionFinding(
-						"inf-030", "Static IP Check — Insufficient Permissions", catInfra,
-						"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+				if IsPermissionDenied(err) {
+					if !permSeenStatic["ListProjectEnvVars"] {
+						permSeenStatic["ListProjectEnvVars"] = true
+						// Canonical infra-040 (not the legacy inf-030 typo).
+						// Legacy configs still match via config.canonicalCheckID.
+						findings = append(findings, permissionFinding(
+							"infra-040", "Static IP Check — Insufficient Permissions", catInfra,
+							"Cannot list project environment variables: API token lacks required permissions. This check was skipped for all projects.",
+						))
+					}
+				} else if !permSeenStatic["ListProjectEnvVars_err"] {
+					permSeenStatic["ListProjectEnvVars_err"] = true
+					findings = append(findings, apiErrorFinding(
+						"infra-040", "Static IP Check Failed", catInfra,
+						"project", projID, projName, err,
 					))
 				}
 				continue

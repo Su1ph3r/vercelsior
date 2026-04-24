@@ -122,38 +122,8 @@ func (s *Scanner) Run(scanID string) (*models.ScanResult, error) {
 	// Enrich findings with PoC evidence and remediation KB data
 	s.enrichFindings(result.Findings)
 
-	// Apply config filters
-	filtered := make([]models.Finding, 0, len(result.Findings))
-	for _, f := range result.Findings {
-		if !s.cfg.IsCategoryAllowed(f.Category) {
-			continue
-		}
-		if !s.cfg.IsCheckAllowed(f.CheckID) {
-			continue
-		}
-		if !s.cfg.MeetsMinSeverity(string(f.Severity)) && f.Status != models.Pass {
-			continue
-		}
-		if s.cfg.IsSuppressed(f.CheckID) {
-			f.Status = models.Pass
-			f.Description = "[SUPPRESSED] " + f.Description
-		}
-		filtered = append(filtered, f)
-	}
-	result.Findings = filtered
-
-	// Deduplicate findings with identical check_id + resource_id
-	seen := make(map[string]bool)
-	deduped := make([]models.Finding, 0, len(result.Findings))
-	for _, f := range result.Findings {
-		key := f.CheckID + "|" + f.ResourceID
-		if seen[key] {
-			continue
-		}
-		seen[key] = true
-		deduped = append(deduped, f)
-	}
-	result.Findings = deduped
+	result.Findings = applyFilters(s.cfg, result.Findings)
+	result.Findings = dedupeFindings(result.Findings)
 
 	// Sort findings: status (FAIL > WARN > ERROR > PASS), then severity, then risk score, then category
 	statusRank := map[models.Status]int{
@@ -179,6 +149,56 @@ func (s *Scanner) Run(scanID string) (*models.ScanResult, error) {
 
 	result.Compute()
 	return result, nil
+}
+
+// applyFilters is the config-driven post-processing that runs on the raw
+// findings collected from each check module. It enforces three rules in a
+// specific order:
+//
+//  1. Category allowlist / skip list
+//  2. CheckID allowlist / skip list
+//  3. Suppression rewrite (Status becomes Pass with a [SUPPRESSED] prefix)
+//  4. Minimum severity cut — applied AFTER suppression so a suppressed check
+//     below the threshold stays visible as Pass instead of silently
+//     disappearing.
+//
+// The ordering in step 3-4 is load-bearing (regression for F-L2). See
+// scanner_test.go TestApplyFilters_SuppressionBeforeMinSeverity.
+func applyFilters(cfg *config.Config, findings []models.Finding) []models.Finding {
+	filtered := make([]models.Finding, 0, len(findings))
+	for _, f := range findings {
+		if !cfg.IsCategoryAllowed(f.Category) {
+			continue
+		}
+		if !cfg.IsCheckAllowed(f.CheckID) {
+			continue
+		}
+		if cfg.IsSuppressed(f.CheckID) {
+			f.Status = models.Pass
+			f.Description = "[SUPPRESSED] " + f.Description
+		}
+		if !cfg.MeetsMinSeverity(string(f.Severity)) && f.Status != models.Pass {
+			continue
+		}
+		filtered = append(filtered, f)
+	}
+	return filtered
+}
+
+// dedupeFindings removes duplicates that share CheckID + ResourceID.
+// Later duplicates (same key) are dropped; the first occurrence wins.
+func dedupeFindings(findings []models.Finding) []models.Finding {
+	seen := make(map[string]bool, len(findings))
+	out := make([]models.Finding, 0, len(findings))
+	for _, f := range findings {
+		key := f.CheckID + "|" + f.ResourceID
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, f)
+	}
+	return out
 }
 
 func (s *Scanner) CheckCount() int {

@@ -120,6 +120,11 @@ func (lc *LoggingChecks) checkWebhooks(c *client.Client) []models.Finding {
 				"log-010", "Webhooks Check — Insufficient Permissions", catLogging,
 				"Cannot list webhooks: API token lacks required permissions. This check was skipped.",
 			))
+		} else {
+			findings = append(findings, apiErrorFinding(
+				"log-010", "Webhooks Check Failed", catLogging,
+				"webhook", "N/A", "", err,
+			))
 		}
 		return findings
 	}

@@ -162,7 +162,17 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 			}
 			dChecks, err := c.ListDeploymentChecks(deployID)
 			if err != nil {
-				// permSeen already covers ListDeploymentChecks above
+				// 403s are already surfaced via the permSeen-guarded
+				// permissionFinding in the chk-002 loop above; other
+				// errors (5xx, network, rate limit) were previously
+				// silent so the audit gap now emits a visible Error.
+				if !IsPermissionDenied(err) && !permSeen["ListDeploymentChecks_err"] {
+					permSeen["ListDeploymentChecks_err"] = true
+					findings = append(findings, apiErrorFinding(
+						"chk-003", "Deployment Check Enumeration Failed", catVerification,
+						"deployment", deployID, projName, err,
+					))
+				}
 				continue
 			}
 			for _, chk := range dChecks {

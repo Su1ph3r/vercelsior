@@ -3,10 +3,27 @@ package checks
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"unicode/utf8"
 
 	"github.com/Su1ph3r/vercelsior/internal/client"
 	"github.com/Su1ph3r/vercelsior/internal/models"
 )
+
+// utf8SafeTruncate returns s truncated to at most maxBytes bytes, cut on a
+// valid UTF-8 rune boundary. If s is already within the limit it is returned
+// unchanged. Handles invalid input by repeatedly trimming trailing bytes
+// until the result is a valid UTF-8 string.
+func utf8SafeTruncate(s string, maxBytes int) string {
+	if maxBytes < 0 || len(s) <= maxBytes {
+		return s
+	}
+	trimmed := s[:maxBytes]
+	for len(trimmed) > 0 && !utf8.ValidString(trimmed) {
+		trimmed = trimmed[:len(trimmed)-1]
+	}
+	return trimmed
+}
 
 // Check is the interface all audit check modules must implement.
 type Check interface {
@@ -185,5 +202,25 @@ func permissionFinding(checkID, title, category, desc string) models.Finding {
 		ResourceType: "permission",
 		ResourceID:   "N/A",
 		Remediation:  "Ensure your API token has the required scopes for this check. See Vercel API token documentation.",
+	}
+}
+
+// apiErrorFinding creates a standardized INFO/ERROR finding for non-403 API
+// errors. The caller should emit this in the `else` branch of every
+// IsPermissionDenied check so transient 5xx/network failures are visible in
+// the report instead of silently skipping the check. resourceType describes
+// the object kind (e.g. "project"), resourceID/resourceName identify the
+// specific instance if available ("N/A" is acceptable for global failures).
+func apiErrorFinding(checkID, title, category, resourceType, resourceID, resourceName string, err error) models.Finding {
+	return models.Finding{
+		CheckID:      checkID,
+		Title:        title,
+		Category:     category,
+		Severity:     models.Info,
+		Status:       models.Error,
+		Description:  fmt.Sprintf("%s: %v", title, err),
+		ResourceType: resourceType,
+		ResourceID:   resourceID,
+		ResourceName: resourceName,
 	}
 }
