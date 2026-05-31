@@ -2,7 +2,6 @@ package checks
 
 import (
 	"fmt"
-	"log"
 	"strings"
 
 	"github.com/Su1ph3r/vercelsior/internal/client"
@@ -24,14 +23,28 @@ func (tc *TakeoverChecks) Category() string { return catTakeover }
 func (tc *TakeoverChecks) Run(c *client.Client) []models.Finding {
 	var findings []models.Finding
 
-	// Build a set of all project domains.
-	projectDomains := tc.collectProjectDomains(c)
-	if projectDomains == nil {
-		findings = append(findings, permissionFinding(
-			"sto-001", "Takeover Check — Insufficient Permissions",
-			catTakeover,
-			"Cannot list projects or their domains: API token may lack required permissions. Subdomain takeover checks were skipped to avoid false positives.",
-		))
+	// Build a set of all project domains. This set is the negative oracle for
+	// the dangling/orphaned checks below: anything NOT in it is treated as a
+	// takeover candidate. An incomplete set therefore produces false-positive
+	// CRITICAL/HIGH findings, so any failure building it must skip those checks
+	// rather than assert "unclaimed" against partial data.
+	projectDomains, err := tc.collectProjectDomains(c)
+	if err != nil {
+		if IsPermissionDenied(err) {
+			findings = append(findings, permissionFinding(
+				"sto-001", "Takeover Check — Insufficient Permissions",
+				catTakeover,
+				"Cannot list projects or their domains: API token may lack required permissions. Subdomain takeover checks were skipped to avoid false positives.",
+			))
+		} else {
+			// Distinct CheckID (not bare sto-001) so this ERROR does not collide
+			// with sto-001 pass/fail findings under ResourceID "N/A" in the
+			// CheckID|ResourceID dedup.
+			findings = append(findings, apiErrorFinding(
+				"sto-001-error", "Takeover Check Skipped — Incomplete Domain Set",
+				catTakeover, "project", "N/A", "", err,
+			))
+		}
 		return findings
 	}
 
@@ -41,14 +54,17 @@ func (tc *TakeoverChecks) Run(c *client.Client) []models.Finding {
 	return findings
 }
 
-// collectProjectDomains returns a set of all domain names attached to projects.
-func (tc *TakeoverChecks) collectProjectDomains(c *client.Client) map[string]bool {
+// collectProjectDomains returns the set of all domain names attached to
+// projects. It returns an error (rather than a partial set) if any project's
+// domains cannot be listed: a missing project's domains would turn that
+// project's own CNAMEs/aliases into false-positive takeover findings, so the
+// caller must treat an incomplete set as a hard stop.
+func (tc *TakeoverChecks) collectProjectDomains(c *client.Client) (map[string]bool, error) {
 	set := make(map[string]bool)
 
 	projects, err := c.ListProjects()
 	if err != nil {
-		log.Printf("Warning: failed to list projects for takeover check: %v", err)
-		return nil
+		return nil, err
 	}
 
 	for _, p := range projects {
@@ -58,7 +74,7 @@ func (tc *TakeoverChecks) collectProjectDomains(c *client.Client) map[string]boo
 		}
 		domains, err := c.ListProjectDomains(projID)
 		if err != nil {
-			continue
+			return nil, fmt.Errorf("listing domains for project %s: %w", projID, err)
 		}
 		for _, d := range domains {
 			name := str(d["name"])
@@ -68,7 +84,7 @@ func (tc *TakeoverChecks) collectProjectDomains(c *client.Client) map[string]boo
 		}
 	}
 
-	return set
+	return set, nil
 }
 
 // checkDanglingCNAME detects CNAME records pointing to Vercel that have no

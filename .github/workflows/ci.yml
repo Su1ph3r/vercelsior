@@ -39,5 +39,27 @@ jobs:
             exit 1
           fi
 
+      # Race detector requires cgo and a C toolchain; run it on Linux only.
+      # The other matrix OSes still run the full suite without -race.
+      - name: Test (race)
+        if: matrix.os == 'ubuntu-latest'
+        run: go test ./... -race -count=1
+
       - name: Test
-        run: go test ./...
+        if: matrix.os != 'ubuntu-latest'
+        run: go test ./... -count=1
+
+  lint:
+    name: golangci-lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+          cache: true
+      - uses: golangci/golangci-lint-action@v6
+        with:
+          # Pinned to a v1.x release: .golangci.yml uses the v1 config schema.
+          # golangci-lint v2 changed the schema, so do not use `latest`.
+          version: v1.64.8

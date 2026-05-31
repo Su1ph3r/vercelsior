@@ -1,5 +1,119 @@
 # Changelog
 
+## v1.0.0 — 2026-05-31
+
+The trifecta release. Vercelsior becomes a three-mode Vercel security tool —
+**`scan`** (account CSPM via the API), **`probe`** (black-box DAST against a
+deployed URL), and **`project`** (local IaC/SAST, pre-deploy) — plus SARIF 2.1.0
+output, a full release pipeline (goreleaser, multi-arch Docker, SBOMs), and
+GitHub Code Scanning support. Fully backward compatible: the legacy
+`vercelsior [flags]` invocation still runs `scan` unchanged.
+
+### Added
+- **Subcommand architecture.** The CLI now routes `scan`, `project`, `probe`,
+  `version`, and `help` subcommands (zero new dependencies). `scan` is the
+  existing account/team API audit (CSPM). **Fully backward compatible:**
+  invoking `vercelsior` with no subcommand or a leading flag (e.g.
+  `vercelsior --token ...`, `VERCEL_TOKEN=... vercelsior`) still runs `scan`
+  exactly as before. `run`/`route` are unit-tested for the legacy and explicit
+  forms.
+- **Probe mode (`vercelsior probe <url>`) — black-box DAST.** Tests a deployed
+  URL from the outside with no token. Checks: **CVE-2025-29927** Next.js
+  middleware auth bypass (compares a blocked baseline against the
+  `x-middleware-subrequest` bypass header and only reports when protection is
+  observably skipped — scoped to Next.js targets to avoid false claims),
+  exposed JavaScript **source maps**, **security headers** (CSP/HSTS/
+  X-Frame-Options/X-Content-Type-Options/Referrer-Policy/Permissions-Policy),
+  and **technology disclosure** (X-Powered-By). New `internal/prober` package
+  (16 unit tests via an injectable `Fetcher`, no network in tests) emits the
+  standard `models.ScanResult`, so all reporters (incl. SARIF) work unchanged.
+  All egress reuses the SSRF-guarded, redirect-pinned probe client via a new
+  `client.Probe` method, with same-host enforcement on discovered URLs.
+- **Project mode (`vercelsior project [path]`) — local IaC/SAST.** Static
+  analysis of a project repo with no token, for pre-deploy / shift-left CI.
+  Checks: **Next.js CVE** matrix against the `next` version in package.json,
+  **committed/client-exposed secrets** in `.env*` (hardcoded values,
+  `NEXT_PUBLIC_`/`VITE_`/etc. leakage, `.gitignore` coverage), risky
+  **next.config.*** flags (`productionBrowserSourceMaps`, `ignoreBuildErrors`,
+  `ignoreDuringBuilds`, `poweredByHeader`), and **vercel.json** issues
+  (external redirects/rewrites, missing security headers). New `internal/project`
+  package reads through `io/fs` (tested with `fstest.MapFS`, no real FS) and a
+  shared `internal/nextjs` package holds the version/CVE logic. Conservative
+  secret detection (strong token shapes + sensitive-name-plus-real-value +
+  entropy) to minimize false positives.
+- **The trifecta is complete:** Vercelsior now tests Vercel security from the
+  inside (`scan`), the repo (`project`), and the outside (`probe`).
+- **SARIF 2.1.0 output (`-f sarif`).** New `internal/reporter/sarif.go` emits a
+  GitHub Code Scanning-compatible SARIF log. Findings (FAIL/WARN/ERROR; PASS
+  excluded) become results with severity→level mapping, per-finding
+  `security-severity` derived from the 1–10 risk score, deterministic rule
+  ordering, and stable `partialFingerprints` (SHA-256 of check + resource) so a
+  persisting finding is tracked across scans rather than re-reported as new.
+  Non-source cloud findings get a synthetic `vercel/<category>/<resource>`
+  artifact URI plus a logical location naming the resource.
+- **Release automation.** `.goreleaser.yml` + `.github/workflows/release.yml`
+  produce cross-platform binaries (linux/darwin/windows × amd64/arm64),
+  archives, `checksums.txt`, CycloneDX SBOMs, a multi-arch GHCR Docker image
+  (`ghcr.io/su1ph3r/vercelsior`), and Homebrew/Scoop manifests on tagged
+  releases.
+- **Docker images.** `Dockerfile` (build-from-source) and `Dockerfile.goreleaser`
+  (release image), Alpine-based with `ca-certificates`.
+- **golangci-lint in CI.** New `lint` job + `.golangci.yml` (govet, staticcheck,
+  errcheck, ineffassign, unused, gofmt, goimports, misspell, unconvert,
+  bodyclose). Tests now run with `-race`.
+- **Build-version stamping.** `main.version` is now injected via
+  `-ldflags -X main.version=...`; `make build`, Docker, and goreleaser all stamp
+  the version, and it is recorded in SARIF output.
+
+### Changed
+- **Single Next.js CVE source of truth.** The CVE matrix and version parser
+  previously existed in two copies (the scan path and project mode). Both now
+  consume `internal/nextjs` (`Match`/`ParseVersion`), so a CVE is added once.
+  Behavior preserved; the matrix is covered by an integrity guard plus per-CVE
+  matrix tests (95% statement coverage).
+
+### Fixed
+- **`takeover` false-positive CRITICALs.** A swallowed per-project
+  `ListProjectDomains` error dropped that project's domains from the "claimed"
+  set, turning its own CNAMEs/aliases into bogus dangling-takeover findings
+  (`sto-001` CRITICAL / `sto-002` HIGH). `collectProjectDomains` now propagates
+  the error; `Run` emits a distinct `sto-001-error` and skips the negative
+  checks rather than asserting against an incomplete set.
+- **Case-insensitive `--checks`/`--skip-checks`.** CheckID filtering matched
+  case-sensitively while IDs are emitted lowercase, so the documented uppercase
+  form (`--skip-checks IAM-001`) silently no-opped (and an uppercase allowlist
+  dropped every finding). `canonicalCheckID` now folds case before the alias
+  lookup.
+- **Probe checks no longer assert safety when they cannot run.** The
+  CVE-2025-29927 and source-map probes returned PASS ("not exploitable" /
+  "clean") when every probe/fetch errored (e.g. a WAF tarpitting the bypass
+  header); they now return ERROR when nothing could be evaluated.
+- **Project mode distinguishes unreadable from absent files.** A permission/IO
+  error on `package.json`/`.env*`/`next.config.*`/`vercel.json` is now an ERROR
+  finding instead of being treated as "file absent" (silent skip).
+- **`iam-005` no longer fails open** on an object-shaped `scopes` payload
+  (extracted as the tested `isFullAccessScopes` helper).
+- **SPF detection** (`dom-023`) no longer false-positives on a TXT value of
+  exactly `v=spf1`.
+- **`chk-002`** reports the number of deployments actually inspected, not the
+  full recent-deployment count.
+- **Terminal summary now prints the `Errors` count** when non-zero, so a
+  coverage gap (checks that could not run) is visible rather than only inflating
+  the posture score.
+- **Probe PoC evidence truncation is UTF-8-safe** (`internal/prober`), matching
+  the client's existing rune-boundary handling.
+- **SSRF guard hardened** beyond the v0.1.4 work: blocks CGNAT `100.64.0.0/10`,
+  `0.0.0.0/8`, protocol/benchmark ranges, and the IPv4 embedded in NAT64
+  (`64:ff9b::/96`) / 6to4 (`2002::/16`) addresses, while still allowing
+  public IPv4 wrapped in those transitions.
+- **Packaging:** anchored the `.gitignore` binary patterns (`/vercelsior`) so
+  they no longer match the `cmd/vercelsior/` source directory — without this a
+  fresh clone / CI / release build would omit the package's source files.
+
+### Removed
+- Dead code: unused `evidence()` helper in `internal/checks/base.go` and unused
+  `findFinding()` test helper.
+
 ## v0.1.4
 
 Hardening release: 33 issues addressed across security, correctness, resource management, and reporting. No user-facing breaking changes — legacy CheckIDs still match via a compatibility alias map.

@@ -127,24 +127,6 @@ func buildEvidenceRaw(apiPath string, statusCode int, body string, summary strin
 	}
 }
 
-func evidence(c *client.Client, path, summary string) []models.PocEvidence {
-	ev := c.GetEvidence(path)
-	if ev == nil {
-		return nil
-	}
-	return []models.PocEvidence{{
-		Request: models.PocRequest{
-			Method: ev.Method,
-			URL:    "https://api.vercel.com" + path,
-		},
-		Response: models.PocResponse{
-			StatusCode: ev.StatusCode,
-			Body:       ev.Body,
-		},
-		Summary: summary,
-	}}
-}
-
 func str(v interface{}) string {
 	if v == nil {
 		return ""

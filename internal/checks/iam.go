@@ -10,6 +10,25 @@ import (
 
 const catIAM = "Identity & Access Management"
 
+// isFullAccessScopes reports whether a token's "scopes" value represents
+// unrestricted (full) access. Absent/null scopes, or an empty collection of
+// either the array shape (current API) or an object shape (used by some API
+// versions), all mean "no restrictions". An unrecognized non-nil shape is
+// treated as NOT full-access — conservative, to avoid a false-positive HIGH
+// finding on a scope payload the tool does not model.
+func isFullAccessScopes(scopesVal interface{}) bool {
+	switch s := scopesVal.(type) {
+	case nil:
+		return true
+	case []interface{}:
+		return len(s) == 0
+	case map[string]interface{}:
+		return len(s) == 0
+	default:
+		return false
+	}
+}
+
 type IAMChecks struct{}
 
 func (ic *IAMChecks) Name() string     { return "IAM" }
@@ -116,14 +135,13 @@ func (ic *IAMChecks) checkTokens(c *client.Client) []models.Finding {
 			}
 		}
 
-		// Check: token scope breadth — null/absent scopes means full access
-		scopesVal := t["scopes"]
-		isFullAccess := false
-		if scopesVal == nil {
-			isFullAccess = true
-		} else if scopeArr, ok := scopesVal.([]interface{}); ok && len(scopeArr) == 0 {
-			isFullAccess = true
-		}
+		// Check: token scope breadth — null/absent or empty scopes means full
+		// access. Handle both the array shape (current API) and an object shape
+		// (used by some API versions): an empty collection of either kind means
+		// "no scope restrictions". An unrecognized non-nil shape is left as
+		// not-full-access (conservative — avoids a false-positive HIGH on a
+		// scope payload we don't model).
+		isFullAccess := isFullAccessScopes(t["scopes"])
 		if isFullAccess {
 			f := warn(
 				"iam-005", "Token With Full Access Scope", catIAM, models.High,

@@ -1,0 +1,158 @@
+# goreleaser configuration — https://goreleaser.com
+#
+# Drives the release pipeline when a tag matching v* is pushed (see
+# .github/workflows/release.yml):
+#
+#   builds   → static single binaries for 5 platform/arch pairs
+#   archives → tar.gz (unix) / zip (windows), checksummed
+#   dockers  → multi-arch image pushed to GHCR (ghcr.io/su1ph3r/vercelsior)
+#   sbom     → CycloneDX SBOM attached to each archive
+#   brews    → Homebrew formula pushed to Su1ph3r/homebrew-tap
+#   scoops   → Scoop manifest pushed to Su1ph3r/scoop-bucket
+#
+# The Homebrew/Scoop publishers require the tap/bucket repositories to exist
+# and a token with push access (HOMEBREW_TAP_GITHUB_TOKEN). They are guarded
+# by `skip_upload: auto` so prereleases (e.g. v1.0.0-rc1) do not mutate the
+# public taps.
+version: 2
+
+project_name: vercelsior
+
+before:
+  hooks:
+    - go mod tidy
+    - go test ./...
+
+builds:
+  - id: vercelsior
+    main: ./cmd/vercelsior
+    binary: vercelsior
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    # Vercelsior is pure-Go with no platform-specific code; build every
+    # combination above.
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    mod_timestamp: "{{ .CommitTimestamp }}"
+
+archives:
+  - id: vercelsior
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - CHANGELOG.md
+      - CHECK_REFERENCE.md
+
+checksum:
+  name_template: "checksums.txt"
+
+sboms:
+  - artifacts: archive
+
+dockers:
+  - image_templates:
+      - "ghcr.io/su1ph3r/vercelsior:{{ .Version }}-amd64"
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    goarch: amd64
+    build_flag_templates:
+      - "--platform=linux/amd64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/Su1ph3r/vercelsior"
+      - "--label=org.opencontainers.image.licenses=MIT"
+  - image_templates:
+      - "ghcr.io/su1ph3r/vercelsior:{{ .Version }}-arm64"
+    use: buildx
+    dockerfile: Dockerfile.goreleaser
+    goarch: arm64
+    build_flag_templates:
+      - "--platform=linux/arm64"
+      - "--label=org.opencontainers.image.title={{ .ProjectName }}"
+      - "--label=org.opencontainers.image.version={{ .Version }}"
+      - "--label=org.opencontainers.image.revision={{ .FullCommit }}"
+      - "--label=org.opencontainers.image.source=https://github.com/Su1ph3r/vercelsior"
+      - "--label=org.opencontainers.image.licenses=MIT"
+
+docker_manifests:
+  - name_template: "ghcr.io/su1ph3r/vercelsior:{{ .Version }}"
+    image_templates:
+      - "ghcr.io/su1ph3r/vercelsior:{{ .Version }}-amd64"
+      - "ghcr.io/su1ph3r/vercelsior:{{ .Version }}-arm64"
+  - name_template: "ghcr.io/su1ph3r/vercelsior:latest"
+    image_templates:
+      - "ghcr.io/su1ph3r/vercelsior:{{ .Version }}-amd64"
+      - "ghcr.io/su1ph3r/vercelsior:{{ .Version }}-arm64"
+
+# Homebrew/Scoop publishing is disabled until the tap repositories
+# (Su1ph3r/homebrew-tap, Su1ph3r/scoop-bucket) and HOMEBREW_TAP_GITHUB_TOKEN
+# secret exist. `skip_upload: true` keeps the release green in the meantime —
+# goreleaser still generates the formula/manifest as artifacts. Flip to
+# `skip_upload: auto` once the taps are set up (see TODO.md).
+brews:
+  - name: vercelsior
+    repository:
+      owner: Su1ph3r
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: "https://github.com/Su1ph3r/vercelsior"
+    description: "Open-source security scanner and configuration auditor for Vercel"
+    license: "MIT"
+    skip_upload: true
+    test: |
+      system "#{bin}/vercelsior", "--version"
+
+scoops:
+  - repository:
+      owner: Su1ph3r
+      name: scoop-bucket
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    homepage: "https://github.com/Su1ph3r/vercelsior"
+    description: "Open-source security scanner and configuration auditor for Vercel"
+    license: "MIT"
+    skip_upload: true
+
+changelog:
+  sort: asc
+  use: github
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Others
+      order: 999
+
+release:
+  github:
+    owner: Su1ph3r
+    name: vercelsior
+  draft: false
+  prerelease: auto
+  footer: |
+    ---
+    **Full Changelog**: https://github.com/Su1ph3r/vercelsior/compare/{{ .PreviousTag }}...{{ .Tag }}

@@ -160,16 +160,6 @@ func setupFixtures(t *testing.T) (string, *client.Client) {
 	return dir, c
 }
 
-// findFinding searches the findings list for a specific check ID.
-func findFinding(findings []models.Finding, checkID string) *models.Finding {
-	for i := range findings {
-		if findings[i].CheckID == checkID {
-			return &findings[i]
-		}
-	}
-	return nil
-}
-
 // findFindings returns all findings matching a check ID.
 func findFindings(findings []models.Finding, checkID string) []models.Finding {
 	var matches []models.Finding

@@ -588,11 +588,43 @@ func parseListResponse(raw json.RawMessage, dataKeys ...string) ([]map[string]in
 	return nil, fmt.Errorf("unexpected response shape: neither array nor object")
 }
 
+// mustParseCIDR parses a CIDR at init time, panicking on a malformed constant
+// (a programmer error in the literals below, never runtime input).
+func mustParseCIDR(s string) *net.IPNet {
+	_, n, err := net.ParseCIDR(s)
+	if err != nil {
+		panic("invalid SSRF-guard CIDR " + s + ": " + err.Error())
+	}
+	return n
+}
+
+// disallowedProbeNets are internal/reserved ranges that the stdlib net.IP
+// predicates (IsPrivate/IsLoopback/…) do NOT catch but which the SSRF guard
+// must still refuse. Without these, a hostile DNS answer in one of these forms
+// would be validated and dialed.
+var disallowedProbeNets = []*net.IPNet{
+	mustParseCIDR("100.64.0.0/10"), // CGNAT / shared address space (RFC 6598) — common for internal infra
+	mustParseCIDR("0.0.0.0/8"),     // "this host" network (RFC 1122); only 0.0.0.0 is caught by IsUnspecified
+	mustParseCIDR("192.0.0.0/24"),  // IETF protocol assignments (RFC 6890)
+	mustParseCIDR("198.18.0.0/15"), // benchmarking (RFC 2544)
+}
+
+// nat64WellKnown (RFC 6052) and sixToFour (RFC 3056) embed an IPv4 address
+// inside an IPv6 address. A hostile DNS server can encode an internal IPv4
+// (e.g. 169.254.169.254) in these forms to slip past the IPv4-oriented
+// predicates in a NAT64/6to4-capable environment. We extract the embedded
+// IPv4 and re-validate it, rather than blanket-blocking the whole prefix,
+// so legitimate public IPv4 targets reached via NAT64/6to4 still work.
+var (
+	nat64WellKnown = mustParseCIDR("64:ff9b::/96")
+	sixToFour      = mustParseCIDR("2002::/16")
+)
+
 // isDisallowedProbeIP reports whether the given IP is in a range that the
-// SSRF guard must refuse: loopback, private, link-local, multicast, or the
-// unspecified address (0.0.0.0 / ::). The 169.254.169.254 cloud metadata
-// endpoint is already covered by IsLinkLocalUnicast, but we check it
-// explicitly as belt-and-braces.
+// SSRF guard must refuse: loopback, private, link-local, multicast, the
+// unspecified address (0.0.0.0 / ::), the additional reserved ranges the
+// stdlib predicates miss (CGNAT, 0.0.0.0/8, protocol/benchmark blocks), and
+// the IPv4 embedded in a NAT64/6to4 address.
 func isDisallowedProbeIP(ip net.IP) bool {
 	if ip == nil {
 		return true
@@ -600,6 +632,21 @@ func isDisallowedProbeIP(ip net.IP) bool {
 	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() ||
 		ip.IsLinkLocalMulticast() || ip.IsMulticast() || ip.IsUnspecified() {
 		return true
+	}
+	for _, n := range disallowedProbeNets {
+		if n.Contains(ip) {
+			return true
+		}
+	}
+	// NAT64: low 32 bits are the embedded IPv4 (e.g. 64:ff9b::a9fe:a9fe ->
+	// 169.254.169.254 cloud metadata). 6to4: bytes 2..5 are the embedded IPv4.
+	if b := ip.To16(); b != nil {
+		if nat64WellKnown.Contains(ip) && isDisallowedProbeIP(net.IPv4(b[12], b[13], b[14], b[15])) {
+			return true
+		}
+		if sixToFour.Contains(ip) && isDisallowedProbeIP(net.IPv4(b[2], b[3], b[4], b[5])) {
+			return true
+		}
 	}
 	return false
 }
@@ -718,4 +765,83 @@ func (c *Client) ProbeHeaders(targetURL string) (map[string]string, error) {
 		}
 	}
 	return headers, nil
+}
+
+// maxProbeBodyBytes caps how much of a probed response body is read into
+// memory. Probe mode parses HTML for script tags and inspects source-map
+// JSON; 512 KiB is generous for a Next.js document/bundle head while bounding
+// memory if a target streams an unexpectedly large body.
+const maxProbeBodyBytes = 512 * 1024
+
+// ProbeResponse is the result of a general-purpose probe request used by DAST
+// (probe) mode. Headers are lowercased, first-value-only (sufficient for the
+// header-hygiene and bypass checks).
+type ProbeResponse struct {
+	StatusCode int
+	Headers    map[string]string
+	Body       string
+	FinalURL   string
+}
+
+// Probe issues an arbitrary-method request with caller-supplied headers and
+// returns the status, response headers, and a size-capped body. It reuses the
+// same SSRF-guarded, pinned-IP, redirect-refusing client as ProbeHeaders, so
+// probe mode inherits every egress protection (private/reserved IP blocking,
+// DNS-rebinding defense) for free and cannot be turned into an SSRF primitive.
+//
+// Redirects are deliberately NOT followed (the shared client returns the 3xx
+// response as-is): probe checks compare a "blocked" baseline (e.g. a 307 to a
+// login page, or a 401) against the response to a crafted request, so the raw
+// redirect is the signal we need.
+func (c *Client) Probe(method, targetURL string, headers map[string]string) (*ProbeResponse, error) {
+	parsed, err := url.Parse(targetURL)
+	if err != nil {
+		return nil, fmt.Errorf("parsing probe URL %q: %w", targetURL, err)
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return nil, fmt.Errorf("probe URL must be http or https, got %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return nil, fmt.Errorf("probe URL has no host")
+	}
+	if method == "" {
+		method = http.MethodGet
+	}
+
+	req, err := http.NewRequest(method, targetURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating probe request: %w", err)
+	}
+	req.Header.Set("User-Agent", "vercelsior-security-scanner")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := c.getProbeClient().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("probing %s: %w", targetURL, err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxProbeBodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("reading probe body for %s: %w", targetURL, err)
+	}
+
+	hdr := make(map[string]string, len(resp.Header))
+	for k, v := range resp.Header {
+		if len(v) > 0 {
+			hdr[strings.ToLower(k)] = v[0]
+		}
+	}
+	finalURL := targetURL
+	if resp.Request != nil && resp.Request.URL != nil {
+		finalURL = resp.Request.URL.String()
+	}
+	return &ProbeResponse{
+		StatusCode: resp.StatusCode,
+		Headers:    hdr,
+		Body:       utf8SafeTruncateString(string(body), maxProbeBodyBytes),
+		FinalURL:   finalURL,
+	}, nil
 }

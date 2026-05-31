@@ -248,6 +248,21 @@ func TestIsDisallowedProbeIP(t *testing.T) {
 		{"unspecified v6", "::", true},
 
 		{"multicast v4", "224.0.0.1", true},
+
+		// Ranges the stdlib predicates miss (regression for SSRF guard gaps).
+		{"cgnat 100.64/10", "100.64.1.1", true},
+		{"this-host 0.0.0.0/8", "0.0.0.1", true},
+		{"protocol-assign 192.0.0/24", "192.0.0.8", true},
+		{"benchmark 198.18/15", "198.18.0.1", true},
+
+		// NAT64 / 6to4 embedding an internal IPv4 must be blocked...
+		{"nat64 metadata", "64:ff9b::a9fe:a9fe", true}, // -> 169.254.169.254
+		{"nat64 rfc1918", "64:ff9b::0a01:0203", true},  // -> 10.1.2.3
+		{"6to4 rfc1918", "2002:0a01:0203::1", true},    // -> 10.1.2.3
+		// ...but NAT64/6to4 wrapping a PUBLIC IPv4 must stay allowed so
+		// IPv6-only/NAT64 environments can still probe legitimate targets.
+		{"nat64 public", "64:ff9b::0808:0808", false}, // -> 8.8.8.8
+		{"6to4 public", "2002:0808:0808::1", false},   // -> 8.8.8.8
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

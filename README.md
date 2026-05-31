@@ -3,6 +3,7 @@
 **Open-source security scanner and configuration auditor for Vercel.**
 
 [![CI](https://github.com/Su1ph3r/vercelsior/actions/workflows/ci.yml/badge.svg)](https://github.com/Su1ph3r/vercelsior/actions/workflows/ci.yml)
+[![Release](https://github.com/Su1ph3r/vercelsior/actions/workflows/release.yml/badge.svg)](https://github.com/Su1ph3r/vercelsior/actions/workflows/release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Go Report Card](https://goreportcard.com/badge/github.com/Su1ph3r/vercelsior)](https://goreportcard.com/report/github.com/Su1ph3r/vercelsior)
 
@@ -14,9 +15,49 @@ Single binary. Zero dependencies. Linux, macOS, Windows.
 
 ---
 
+## Modes
+
+Vercelsior tests Vercel security from three angles, each its own subcommand:
+
+| Command | Input | Perspective | Status |
+|---------|-------|-------------|--------|
+| `vercelsior scan` | API token | **CSPM** — audit account/team/project config from the inside | ✅ Available |
+| `vercelsior probe <url>` | a URL | **DAST** — black-box test a deployed site (CVE-2025-29927 middleware bypass, source maps, header hygiene) from the outside, no token | ✅ Available |
+| `vercelsior project [path]` | local repo | **IaC/SAST** — scan `vercel.json`, `next.config.*`, `package.json`, `.env*` pre-deploy, no token | ✅ Available |
+
+Running `vercelsior` with no subcommand (or with a leading flag, e.g. `vercelsior --token ...`) is an alias for `vercelsior scan`, so existing usage and CI pipelines are unaffected. Together the three modes test Vercel security from the **inside** (token), the **repo** (pre-deploy), and the **outside** (deployed URL) — the only tool that does all three.
+
+### Project mode (local IaC/SAST)
+
+Scan a project repository before deploy — no token, runs in CI on every PR:
+
+```sh
+vercelsior project ./my-app
+vercelsior project . -f sarif -o ./results   # GitHub code scanning on PRs
+```
+
+Checks: **Next.js CVE** matrix against the `next` version in `package.json` (incl. CVE-2025-29927), **committed/client-exposed secrets** in `.env*` (hardcoded values, `NEXT_PUBLIC_`/`VITE_`/etc. leakage, `.gitignore` coverage), risky **`next.config.*`** flags (`productionBrowserSourceMaps`, `ignoreBuildErrors`, `ignoreDuringBuilds`, `poweredByHeader`), and **`vercel.json`** issues (external redirects/rewrites, missing security headers).
+
+### Probe mode (black-box DAST)
+
+Test a deployed URL from the outside — no token, the attacker's perspective:
+
+```sh
+vercelsior probe https://my-app.vercel.app
+vercelsior probe my-app.vercel.app/dashboard -f sarif -o ./results
+```
+
+Checks: **CVE-2025-29927** Next.js middleware auth bypass (sends the `x-middleware-subrequest` header and only reports a finding when a blocked baseline flips to a 2xx — no false claims), exposed JavaScript **source maps** (`/_next/static/**/*.js.map`), **security headers** (CSP, HSTS, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy), and **technology disclosure** (`X-Powered-By`). All egress runs through the same SSRF-guarded, redirect-pinned client as `--live`, with same-host enforcement on discovered URLs.
+
+> Only probe targets you are authorized to test.
+
+---
+
 ## What It Finds
 
-**139 security checks** across **20 categories**:
+**160+ checks across the three modes** — 140+ account/team checks in `scan` (20 categories, below), plus the `probe` (DAST) and `project` (IaC/SAST) checks listed in [their sections above](#modes) and detailed in [`CHECK_REFERENCE.md`](./CHECK_REFERENCE.md).
+
+The `scan` mode (CSPM) covers:
 
 - Leaked API tokens, tokens without expiration, overprivileged scopes
 - Disabled WAF/firewall, missing OWASP rules, no rate limiting
@@ -59,12 +100,31 @@ go install github.com/Su1ph3r/vercelsior/cmd/vercelsior@latest
 
 Pre-built binaries for Linux (amd64/arm64), macOS (amd64/arm64), and Windows (amd64) are available on the [Releases](https://github.com/Su1ph3r/vercelsior/releases) page.
 
+### Homebrew (macOS / Linux)
+
+```sh
+brew install Su1ph3r/tap/vercelsior
+```
+
+### Scoop (Windows)
+
+```powershell
+scoop bucket add su1ph3r https://github.com/Su1ph3r/scoop-bucket
+scoop install vercelsior
+```
+
+### Docker
+
+```sh
+docker run --rm -e VERCEL_TOKEN ghcr.io/su1ph3r/vercelsior --min-severity HIGH
+```
+
 ### Build From Source
 
 ```sh
 git clone https://github.com/Su1ph3r/vercelsior.git
 cd vercelsior
-go build -o vercelsior ./cmd/vercelsior/
+make build      # or: go build -o vercelsior ./cmd/vercelsior/
 ```
 
 ---
@@ -72,26 +132,20 @@ go build -o vercelsior ./cmd/vercelsior/
 ## Quick Start
 
 ```sh
-# Set your Vercel API token
+# --- scan (account CSPM, needs a token) ---
 export VERCEL_TOKEN="your-api-token"
+vercelsior scan                          # run all checks (bare `vercelsior` also works)
+vercelsior scan --team-slug my-team      # scope to a team
+vercelsior scan --min-severity HIGH      # only critical + high findings
+vercelsior scan --live                   # add live security-header probing
+vercelsior scan -f html -o ./reports     # HTML report only
+vercelsior scan --diff ./reports/prev.json   # compare with a previous scan
 
-# Run all checks
-vercelsior
+# --- probe (black-box DAST, no token) ---
+vercelsior probe https://my-app.vercel.app
 
-# Scope to a team
-vercelsior --team-slug my-team
-
-# Only critical and high findings
-vercelsior --min-severity HIGH
-
-# Include live security header probing
-vercelsior --live
-
-# Output HTML report only
-vercelsior -f html -o ./reports
-
-# Compare with a previous scan
-vercelsior --diff ./reports/previous-scan.json
+# --- project (local IaC/SAST, no token) ---
+vercelsior project ./my-app
 ```
 
 ---
@@ -124,6 +178,14 @@ Machine-readable output with full finding data including risk scores, PoC eviden
 
 Portable text report suitable for pull requests, wikis, and documentation.
 
+### SARIF Report
+
+[SARIF 2.1.0](https://docs.oasis-open.org/sarif/sarif/v2.1.0/sarif-v2.1.0.html) output for **GitHub Code Scanning** and generic SAST tooling. Findings appear in your repository's **Security → Code scanning** tab, with per-finding `security-severity` scores (driven by Vercelsior's 1–10 risk score) and stable fingerprints so persisting findings aren't re-reported as new across scans.
+
+```sh
+vercelsior -f sarif -o ./results
+```
+
 ### Scan Diff
 
 Compare two scans to track remediation progress:
@@ -139,8 +201,18 @@ Outputs new findings, resolved findings, and posture score delta in both Markdow
 ## CLI Reference
 
 ```
-vercelsior [OPTIONS]
+vercelsior <command> [options]
+vercelsior [options]            # alias for 'scan' (legacy form)
+
+Commands:
+  scan       Audit a Vercel account/team via the API (CSPM)
+  probe      Black-box test a deployed Vercel URL (no token)
+  project    Scan a local Vercel project (no token, pre-deploy)
+  version    Print the version
+  help       Show help; 'help <command>' for command options
 ```
+
+The options below apply to `scan` (and the legacy bare form).
 
 | Flag | Description |
 |------|-------------|
@@ -148,7 +220,7 @@ vercelsior [OPTIONS]
 | `--team-id` | Scope to a team by ID |
 | `--team`, `--team-slug` | Scope to a team by slug |
 | `-o`, `--output` | Output directory (default: current directory) |
-| `-f`, `--format` | Comma-separated: `html`, `json`, `md` (default: all) |
+| `-f`, `--format` | Comma-separated: `html`, `json`, `md`, `sarif` (default: `html,json,md`) |
 | `--live` | Enable live HTTP header probing against production domains |
 | `--min-severity` | Minimum severity to report: `CRITICAL`, `HIGH`, `MEDIUM`, `LOW`, `INFO` |
 | `--checks` | Run only these check IDs (comma-separated) |
@@ -269,6 +341,38 @@ jobs:
 ```
 
 Set `--min-severity CRITICAL` to fail only on critical findings.
+
+### GitHub Code Scanning (SARIF)
+
+Surface findings directly in the repository's **Security** tab:
+
+```yaml
+name: Vercel Security Audit
+on:
+  schedule:
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  security-events: write   # required to upload SARIF
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+        run: |
+          docker run --rm -e VERCEL_TOKEN -v "$PWD/results:/results" \
+            ghcr.io/su1ph3r/vercelsior --team-slug my-team -f sarif -o /results
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ./results
+```
 
 ---
 

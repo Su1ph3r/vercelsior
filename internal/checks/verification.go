@@ -113,6 +113,7 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 
 		allSucceeded := true
 		totalChecks := 0
+		inspectedDeploys := 0
 		for _, d := range recentDeploys {
 			dID := str(d["uid"])
 			if dID == "" {
@@ -129,6 +130,7 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 				}
 				continue
 			}
+			inspectedDeploys++
 			for _, chk := range dChecks {
 				totalChecks++
 				conclusion := str(chk["conclusion"])
@@ -147,7 +149,7 @@ func (v *VerificationChecks) Run(c *client.Client) []models.Finding {
 				"chk-002", "Deployment Checks Always Passing", catVerification,
 				models.Low, 4.0,
 				"Checks that never fail may be rubber-stamp checks providing false assurance.",
-				fmt.Sprintf("Project '%s' has deployment checks that have succeeded on all recent deployments (%d checks across %d deployments).", projName, totalChecks, len(recentDeploys)),
+				fmt.Sprintf("Project '%s' has deployment checks that have succeeded on all recent deployments (%d checks across %d deployments).", projName, totalChecks, inspectedDeploys),
 				"project", projID, projName,
 				"Review deployment checks to ensure they perform meaningful validation.",
 				map[string]string{"project": projName, "total_checks": fmt.Sprintf("%d", totalChecks)},

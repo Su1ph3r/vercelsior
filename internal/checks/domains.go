@@ -2,6 +2,7 @@ package checks
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/Su1ph3r/vercelsior/internal/client"
@@ -325,7 +326,7 @@ func (dc *DomainChecks) checkDNS(c *client.Client) []models.Finding {
 		for _, r := range records {
 			if str(r["type"]) == "TXT" {
 				val := str(r["value"])
-				if len(val) > 6 && val[:6] == "v=spf1" {
+				if strings.HasPrefix(val, "v=spf1") {
 					hasSPF = true
 				}
 				if str(r["name"]) == "_dmarc" {

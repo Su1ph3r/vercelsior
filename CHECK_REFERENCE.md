@@ -1,6 +1,16 @@
 # Check Reference
 
-Complete reference of all security checks performed by vercelsior.
+Complete reference of all security checks performed by vercelsior across its three modes:
+
+- **`scan`** (account CSPM, requires a token) — the checks grouped by category below, with IDs like `iam-*`, `fw-*`, `sec-*`, `njs-*`, etc.
+- **`probe`** (black-box DAST against a deployed URL, no token) — `prb-*` checks, see [Probe Mode](#probe-mode-dast).
+- **`project`** (local IaC/SAST of a repo, no token) — `prj-*` checks, see [Project Mode](#project-mode-iacsast).
+
+Header/file checks emit a `PASS` finding when the control is present and the `FAIL`/`WARN` finding documented here when it is missing or weak. Checks that cannot run (permission denied, unreachable target, unparseable input, all probes failed) emit an `ERROR` finding so a coverage gap is never silently reported as safe.
+
+---
+
+# Scan Mode (Account CSPM)
 
 ## Identity & Access Management
 
@@ -241,3 +251,46 @@ Complete reference of all security checks performed by vercelsior.
 | stor-001 | Vercel Storage Without IP Restrictions | WARN | MEDIUM | 5.0 | Vercel managed storage has no trusted IPs or Secure Compute. |
 | stor-002 | Storage Credentials in Preview Environment | WARN | HIGH | 7.0 | Production storage credentials accessible in preview deployments. |
 | cron-001 | Cron Job Endpoint Not Protected | WARN | MEDIUM | 5.0 | Cron-related env vars present but no CRON_SECRET configured. |
+
+---
+
+# Probe Mode (DAST)
+
+Black-box tests run by `vercelsior probe <url>` against a **deployed** site, with no API token. All requests go through the same SSRF-guarded, redirect-pinned HTTP client as `--live`. The middleware-bypass check only sends its header to a target that both looks like Next.js and presents an access-controlled baseline, and only reports a finding when the protection is observably skipped.
+
+| Check ID | Title | Status | Severity | Risk Score | Description |
+|----------|-------|--------|----------|------------|-------------|
+| prb-cve-2025-29927 | Next.js Middleware Auth Bypass (CVE-2025-29927) | FAIL | CRITICAL | 9.3 | An access-controlled route returns 2xx when sent the `x-middleware-subrequest` header — middleware (and any auth it enforces) is skipped. Affected Next.js 11.1.4–15.2.2. |
+| prb-sourcemap | Exposed JavaScript Source Map | FAIL | MEDIUM | 5.0 | A `/_next/static/**/*.js.map` (or `sourceMappingURL`-referenced map) is publicly fetchable, exposing original un-minified source. |
+| prb-header-csp | Missing Content-Security-Policy Header | WARN | MEDIUM | 5.0 | No CSP on the live response — no allowlist for scripts/styles/framing. |
+| prb-header-hsts | Missing Strict-Transport-Security Header | WARN | MEDIUM | 4.0 | No HSTS header (HTTPS targets) — exposed to SSL-stripping/MITM. |
+| prb-header-xfo | Missing Clickjacking Protection | WARN | MEDIUM | 4.0 | Neither `X-Frame-Options` nor a CSP `frame-ancestors` directive is set. |
+| prb-header-xcto | Missing X-Content-Type-Options Header | WARN | LOW | 2.0 | No `nosniff` — browsers may MIME-sniff responses. |
+| prb-header-referrer | Missing Referrer-Policy Header | WARN | LOW | 1.5 | Full URLs (possibly carrying tokens) can leak via the Referer header. |
+| prb-header-permissions | Missing Permissions-Policy Header | WARN | LOW | 1.5 | Powerful browser features (camera, geolocation, mic) not explicitly restricted. |
+| prb-info-disclosure | Technology Disclosure via X-Powered-By | WARN | LOW | 2.0 | Response advertises its framework/version, aiding CVE targeting. |
+| prb-connect | Target Unreachable | ERROR | INFO | — | The target URL could not be reached; no checks ran. |
+
+> `prb-cve-2025-29927`, `prb-sourcemap`, and the `prb-header-*` checks also emit `PASS` when not vulnerable / present, and `ERROR` when they could not be evaluated (e.g. all bypass probes blocked, no bundles discovered to test).
+
+---
+
+# Project Mode (IaC/SAST)
+
+Static analysis run by `vercelsior project [path]` against a local repository, with no API token — suitable for pre-deploy / shift-left CI. Inspects `package.json`, `.env*`, `next.config.*`, and `vercel.json`.
+
+| Check ID | Title | Status | Severity | Risk Score | Description |
+|----------|-------|--------|----------|------------|-------------|
+| prj-next-cve | Next.js Version With Known CVEs | FAIL | HIGH/CRITICAL | up to 10.0 | The `next` version in package.json matches the known-CVE matrix (see Scan Mode `njs-002` for the shared matrix; CRITICAL when max CVSS ≥ 9.0). |
+| prj-env-public-leak | Client-Exposed Secret via Public Prefix | FAIL | CRITICAL | 9.0 | A `NEXT_PUBLIC_`/`VITE_`/`GATSBY_`/`REACT_APP_`/`NUXT_PUBLIC_`/`PUBLIC_` var holds a value matching a strong secret token shape — inlined into the client bundle. |
+| prj-env-secret | Hardcoded Secret in .env | FAIL | HIGH | 7.5 | A committable `.env` file contains a hardcoded secret (sensitive name + real value, or a recognized token shape). |
+| prj-env-gitignore | .env Not Covered by .gitignore | WARN | HIGH | 6.0 | A committable `.env` file exists but no `.gitignore` rule covers it. |
+| prj-sourcemaps | Production Browser Source Maps Enabled | WARN | MEDIUM | 5.0 | `next.config.*` sets `productionBrowserSourceMaps: true`, shipping client source maps to production. |
+| prj-open-redirect | Redirect to External Destination | WARN | MEDIUM | 5.0 | A `vercel.json` redirect targets an external origin (open-redirect risk). |
+| prj-external-rewrite | Rewrite Proxies to External Origin | WARN | MEDIUM | 5.0 | A `vercel.json` rewrite silently proxies to an external origin under your domain. |
+| prj-ignore-ts-errors | TypeScript Build Errors Ignored | WARN | LOW | 3.0 | `next.config.*` sets `typescript.ignoreBuildErrors: true`, shipping code that fails type-checking. |
+| prj-missing-headers | No Security Headers in vercel.json | WARN | LOW | 3.0 | `vercel.json` configures no CSP/HSTS/X-Frame-Options/X-Content-Type-Options header. |
+| prj-ignore-eslint | ESLint Ignored During Builds | WARN | LOW | 2.0 | `next.config.*` sets `eslint.ignoreDuringBuilds: true`, disabling lint enforcement at build time. |
+| prj-poweredby | X-Powered-By Header Explicitly Enabled | WARN | LOW | 2.0 | `next.config.*` sets `poweredByHeader: true`, advertising the framework. |
+
+> Project mode also emits `PASS` findings for clean files, an informational `prj-next-cve` (WARN) when the `next` version is a range/tag that cannot be pinned for CVE evaluation, `prj-scope` (PASS) when no recognizable project files are found, and `ERROR` findings (e.g. `prj-vercel-json`, `prj-nextconfig`) when a present file is unreadable or unparseable.

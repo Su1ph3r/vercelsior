@@ -26,8 +26,12 @@ var checkIDAliases = map[string]string{
 }
 
 // canonicalCheckID returns the canonical form of a possibly-legacy CheckID.
-// Unknown IDs are returned unchanged.
+// CheckIDs are case-insensitive: check modules emit them lowercase, so a
+// user who writes the documented uppercase form (e.g. --skip-checks IAM-001)
+// must still match. Case is folded BEFORE the alias lookup (alias keys are
+// lowercase). Unknown IDs are returned in their lowercased form.
 func canonicalCheckID(id string) string {
+	id = strings.ToLower(strings.TrimSpace(id))
 	if canonical, ok := checkIDAliases[id]; ok {
 		return canonical
 	}

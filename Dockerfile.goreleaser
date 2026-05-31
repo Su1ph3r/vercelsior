@@ -1,0 +1,8 @@
+# Used by goreleaser's `dockers` step. goreleaser builds the static binary
+# first and places it in the build context, so this image just wraps it.
+# ca-certificates is required because Vercelsior talks to api.vercel.com over
+# TLS and (in --live mode) probes production domains.
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates
+COPY vercelsior /usr/local/bin/vercelsior
+ENTRYPOINT ["vercelsior"]

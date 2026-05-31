@@ -25,6 +25,14 @@ func TestCanonicalCheckID(t *testing.T) {
 		{"unknown-check", "unknown-check"},
 		{"", ""},
 		{"iam-001", "iam-001"},
+
+		// Case-insensitive: the documented uppercase form must canonicalize to
+		// the lowercase ID that check modules emit, and case folding happens
+		// before the alias lookup.
+		{"IAM-001", "iam-001"},
+		{"Iam-001", "iam-001"},
+		{"INF-030", "infra-040"},
+		{"  iam-001  ", "iam-001"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
@@ -33,6 +41,36 @@ func TestCanonicalCheckID(t *testing.T) {
 				t.Errorf("canonicalCheckID(%q) = %q; want %q", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+// TestSkipChecksCaseInsensitive verifies the documented uppercase flag form
+// (e.g. --skip-checks IAM-001) actually skips the lowercase-emitted check,
+// rather than silently no-opping.
+func TestSkipChecksCaseInsensitive(t *testing.T) {
+	cfg := New()
+	cfg.Merge("", nil, []string{"IAM-001", "Dom-002"}, nil)
+	if cfg.IsCheckAllowed("iam-001") {
+		t.Error("--skip-checks IAM-001 should skip iam-001")
+	}
+	if cfg.IsCheckAllowed("dom-002") {
+		t.Error("--skip-checks Dom-002 should skip dom-002")
+	}
+	if !cfg.IsCheckAllowed("fw-001") {
+		t.Error("fw-001 was not skipped and should be allowed")
+	}
+}
+
+// TestChecksAllowlistCaseInsensitive verifies an uppercase allowlist matches
+// the lowercase-emitted IDs (otherwise the report would be empty).
+func TestChecksAllowlistCaseInsensitive(t *testing.T) {
+	cfg := New()
+	cfg.Merge("", []string{"IAM-001"}, nil, nil)
+	if !cfg.IsCheckAllowed("iam-001") {
+		t.Error("allowlist IAM-001 should allow iam-001")
+	}
+	if cfg.IsCheckAllowed("dom-001") {
+		t.Error("allowlist IAM-001 should exclude dom-001")
 	}
 }
 

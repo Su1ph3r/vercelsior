@@ -6,116 +6,10 @@ import (
 
 	"github.com/Su1ph3r/vercelsior/internal/client"
 	"github.com/Su1ph3r/vercelsior/internal/models"
+	"github.com/Su1ph3r/vercelsior/internal/nextjs"
 )
 
 const catFramework = "Framework Security"
-
-type nextjsCVE struct {
-	ID           string
-	Description  string
-	CVSS         float64
-	IsVulnerable func(major, minor, patch int) bool
-}
-
-var nextjsCVEs = []nextjsCVE{
-	{
-		ID:          "CVE-2025-29927",
-		Description: "Next.js middleware authorization bypass",
-		CVSS:        9.1,
-		IsVulnerable: func(maj, min, pat int) bool {
-			// Patched in 14.2.25 and 15.2.3; middleware introduced in 12.0
-			if maj < 12 {
-				return false
-			}
-			if maj < 14 {
-				return true
-			}
-			if maj == 14 {
-				return min < 2 || (min == 2 && pat < 25)
-			}
-			if maj == 15 {
-				return min < 2 || (min == 2 && pat < 3)
-			}
-			return false
-		},
-	},
-	{
-		ID:          "CVE-2025-55182",
-		Description: "React Server Components deserialization RCE (React2Shell)",
-		CVSS:        10.0,
-		IsVulnerable: func(maj, min, pat int) bool {
-			// Complex matrix. Patched per minor series:
-			// 14.2.35+, 15.0.7+, 15.1.11+, 15.2.8+, 15.3.8+, 15.4.10+, 15.5.9+, 16.0.10+
-			if maj < 14 {
-				return false // pre-React 19, not affected
-			}
-			if maj == 14 {
-				return min == 2 && pat < 35
-			}
-			if maj == 15 {
-				switch min {
-				case 0:
-					return pat >= 4 && pat < 7 // affected from 15.0.4
-				case 1:
-					return pat < 11
-				case 2:
-					return pat < 8
-				case 3:
-					return pat < 8
-				case 4:
-					return pat < 10
-				case 5:
-					return pat < 9
-				default:
-					return false
-				}
-			}
-			if maj == 16 {
-				return min == 0 && pat < 10
-			}
-			return false
-		},
-	},
-	{
-		ID:          "CVE-2025-49826",
-		Description: "ISR cache poisoning via 204 response",
-		CVSS:        7.5,
-		IsVulnerable: func(maj, min, pat int) bool {
-			// Affects 15.1.0 to 15.1.7
-			return maj == 15 && min == 1 && pat < 8
-		},
-	},
-	{
-		ID:          "CVE-2025-59471",
-		Description: "Image optimization memory exhaustion via /_next/image",
-		CVSS:        5.9,
-		IsVulnerable: func(maj, min, pat int) bool {
-			// Patched in 15.5.10 and 16.1.5
-			if maj == 15 {
-				return min < 5 || (min == 5 && pat < 10)
-			}
-			if maj == 16 {
-				return min < 1 || (min == 1 && pat < 5)
-			}
-			return false
-		},
-	},
-	{
-		ID:          "CVE-2025-59472",
-		Description: "PPR resume endpoint denial of service via zip bomb",
-		CVSS:        5.9,
-		IsVulnerable: func(maj, min, pat int) bool {
-			// Same patch versions as CVE-2025-59471
-			if maj == 15 {
-				return min < 5 || (min == 5 && pat < 10)
-			}
-			if maj == 16 {
-				return min < 1 || (min == 1 && pat < 5)
-			}
-			return false
-		},
-	},
-}
 
 type NextJSChecks struct{}
 
@@ -274,21 +168,11 @@ func (nc *NextJSChecks) checkOutdatedVersion(c *client.Client, projID, projName 
 			continue
 		}
 
-		major, minor, patch, ok := parseVersion(version)
+		// Match against the shared CVE matrix (single source of truth in
+		// internal/nextjs, used by both this scan path and project mode).
+		matchedCVEs, maxCVSS, ok := nextjs.Match(version)
 		if !ok {
 			continue
-		}
-
-		// Collect all applicable CVEs for this version
-		var matchedCVEs []string
-		var maxCVSS float64
-		for _, cve := range nextjsCVEs {
-			if cve.IsVulnerable(major, minor, patch) {
-				matchedCVEs = append(matchedCVEs, cve.ID)
-				if cve.CVSS > maxCVSS {
-					maxCVSS = cve.CVSS
-				}
-			}
 		}
 
 		if len(matchedCVEs) > 0 {
@@ -365,62 +249,4 @@ func (nc *NextJSChecks) checkFrameworkSet(p map[string]interface{}, projID, proj
 	}
 
 	return findings
-}
-
-// parseVersion extracts major, minor, patch from a semver-like string.
-// Returns ok=false if parsing fails.
-func parseVersion(v string) (int, int, int, bool) {
-	v = strings.TrimPrefix(v, "v")
-
-	parts := strings.SplitN(v, ".", 3)
-	if len(parts) < 2 {
-		return 0, 0, 0, false
-	}
-
-	major, ok1 := safeParseInt(parts[0])
-	minor, ok2 := safeParseInt(parts[1])
-	if !ok1 || !ok2 {
-		return 0, 0, 0, false
-	}
-
-	patch := 0
-	if len(parts) >= 3 {
-		patchStr := parts[2]
-		if idx := strings.IndexAny(patchStr, "-+"); idx >= 0 {
-			patchStr = patchStr[:idx]
-		}
-		// Empty after prerelease strip (e.g. "1.2.-canary") is acceptable
-		// and treated as patch=0. Non-numeric patches (e.g. "1.2.x") are
-		// not safe to assume — reject the whole version so the caller
-		// skips the CVE comparison rather than incorrectly flagging a
-		// project as running the oldest possible patch.
-		if patchStr != "" {
-			p, ok := safeParseInt(patchStr)
-			if !ok {
-				return 0, 0, 0, false
-			}
-			patch = p
-		}
-	}
-
-	return major, minor, patch, true
-}
-
-// safeParseInt converts a string to int, returning ok=false for empty or non-numeric strings.
-func safeParseInt(s string) (int, bool) {
-	if len(s) == 0 {
-		return 0, false
-	}
-	n := 0
-	for _, ch := range s {
-		if ch < '0' || ch > '9' {
-			return 0, false
-		}
-		next := n*10 + int(ch-'0')
-		if next < n {
-			return 0, false
-		}
-		n = next
-	}
-	return n, true
 }

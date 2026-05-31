@@ -1,5 +1,9 @@
-vercelsior
-vercelsior.exe
+# Root build artifacts only — anchored so these do NOT match the
+# cmd/vercelsior/ source directory (a bare `vercelsior` pattern matches at any
+# depth and would ignore the whole package, leaving a fresh clone unable to
+# build).
+/vercelsior
+/vercelsior.exe
 dist/
 reports/
 test/fixtures/baseline/
