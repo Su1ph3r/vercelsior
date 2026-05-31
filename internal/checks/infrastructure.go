@@ -253,7 +253,7 @@ func (ic *InfrastructureChecks) checkAliases(c *client.Client) []models.Finding 
 
 		// Check: alias with protection bypass
 		protBypass := mapVal(a["protectionBypass"])
-		if protBypass != nil && len(protBypass) > 0 {
+		if len(protBypass) > 0 {
 			findings = append(findings, warn(
 				"infra-030", "Alias With Protection Bypass", catInfra, models.High,
 				7.0, "Protection bypass on an alias allows unauthenticated access to a deployment that should be protected. Circumvents access controls.",

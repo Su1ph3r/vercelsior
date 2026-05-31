@@ -101,8 +101,8 @@ func (c *Client) request(method, path string, params map[string]string) (json.Ra
 			resetStr := resp.Header.Get("X-RateLimit-Reset")
 			wait := 5
 			if resetStr != "" {
-				if resetTs, err := strconv.ParseInt(resetStr, 10, 64); err == nil {
-					wait = int(resetTs - time.Now().Unix())
+				if resetTS, err := strconv.ParseInt(resetStr, 10, 64); err == nil {
+					wait = int(resetTS - time.Now().Unix())
 					if wait < 1 {
 						wait = 1
 					}

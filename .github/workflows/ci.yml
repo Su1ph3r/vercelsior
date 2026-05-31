@@ -58,8 +58,12 @@ jobs:
         with:
           go-version: "1.26"
           cache: true
-      - uses: golangci/golangci-lint-action@v6
-        with:
-          # Pinned to a v1.x release: .golangci.yml uses the v1 config schema.
-          # golangci-lint v2 changed the schema, so do not use `latest`.
-          version: v1.64.8
+      # Install golangci-lint v2 via `go install` so it is built with the
+      # runner's Go (1.26). The official v1.x release binaries are built with
+      # go1.24 and refuse a go.mod targeting 1.26 ("language version used to
+      # build golangci-lint is lower than the targeted Go version"); v1 is also
+      # EOL. .golangci.yml uses the v2 config schema. Pinned for reproducibility.
+      - name: Install golangci-lint v2
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+      - name: Lint
+        run: golangci-lint run ./...

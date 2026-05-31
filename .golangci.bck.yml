@@ -1,0 +1,47 @@
+# golangci-lint configuration (v1 schema).
+#
+# Conservative, low-false-positive linter set chosen to keep CI signal high
+# without churning the existing well-tested codebase. errcheck is intentionally
+# tuned to ignore the handful of deliberately-discarded errors (fmt writes to
+# strings.Builder, body drains) rather than disabled wholesale.
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  disable-all: true
+  enable:
+    - govet
+    - staticcheck
+    - ineffassign
+    - unused
+    - errcheck
+    - gofmt
+    - goimports
+    - misspell
+    - unconvert
+    - bodyclose
+
+linters-settings:
+  errcheck:
+    # fmt.Fprintf into a strings.Builder cannot fail; flagging it is noise.
+    exclude-functions:
+      - fmt.Fprintf
+      - fmt.Fprint
+      - fmt.Fprintln
+      - (*strings.Builder).WriteString
+      - (*strings.Builder).WriteRune
+      - (*strings.Builder).WriteByte
+  goimports:
+    local-prefixes: github.com/Su1ph3r/vercelsior
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  exclude-rules:
+    # Test setup code intentionally discards errors (fixture writes, mkdir)
+    # and uses RoundTrip directly without closing bodies — acceptable in tests.
+    - path: _test\.go
+      linters:
+        - errcheck
+        - bodyclose

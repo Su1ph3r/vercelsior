@@ -1,47 +1,63 @@
-# golangci-lint configuration (v1 schema).
-#
-# Conservative, low-false-positive linter set chosen to keep CI signal high
-# without churning the existing well-tested codebase. errcheck is intentionally
-# tuned to ignore the handful of deliberately-discarded errors (fmt writes to
-# strings.Builder, body drains) rather than disabled wholesale.
+version: "2"
 run:
-  timeout: 5m
   tests: true
-
 linters:
-  disable-all: true
+  default: none
   enable:
-    - govet
-    - staticcheck
-    - ineffassign
-    - unused
-    - errcheck
-    - gofmt
-    - goimports
-    - misspell
-    - unconvert
     - bodyclose
-
-linters-settings:
-  errcheck:
-    # fmt.Fprintf into a strings.Builder cannot fail; flagging it is noise.
-    exclude-functions:
-      - fmt.Fprintf
-      - fmt.Fprint
-      - fmt.Fprintln
-      - (*strings.Builder).WriteString
-      - (*strings.Builder).WriteRune
-      - (*strings.Builder).WriteByte
-  goimports:
-    local-prefixes: github.com/Su1ph3r/vercelsior
-
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - staticcheck
+    - unconvert
+    - unused
+  settings:
+    errcheck:
+      exclude-functions:
+        - fmt.Fprintf
+        - fmt.Fprint
+        - fmt.Fprintln
+        - (*strings.Builder).WriteString
+        - (*strings.Builder).WriteRune
+        - (*strings.Builder).WriteByte
+    staticcheck:
+      # Keep every bug-detecting check (SA*, etc.). Disable only QF1012, a
+      # stylistic "quickfix" preferring fmt.Fprintf over WriteString(Sprintf);
+      # the reporters intentionally use the WriteString builder style.
+      checks:
+        - all
+        - -QF1012
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - bodyclose
+          - errcheck
+        path: _test\.go
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
 issues:
   max-issues-per-linter: 0
   max-same-issues: 0
-  exclude-rules:
-    # Test setup code intentionally discards errors (fixture writes, mkdir)
-    # and uses RoundTrip directly without closing bodies — acceptable in tests.
-    - path: _test\.go
-      linters:
-        - errcheck
-        - bodyclose
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/Su1ph3r/vercelsior
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

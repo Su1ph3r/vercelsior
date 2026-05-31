@@ -85,20 +85,20 @@ func (ic *IAMChecks) checkTokens(c *client.Client) []models.Finding {
 			findings = append(findings, f)
 		} else {
 			// Check if expired
-			expTs := time.UnixMilli(int64(num(expiresAt)))
-			if expTs.Before(now) {
+			expTS := time.UnixMilli(int64(num(expiresAt)))
+			if expTS.Before(now) {
 				findings = append(findings, fail(
 					"iam-002", "Expired Token Not Revoked", catIAM, models.Medium,
 					5.0, "Expired tokens cannot be used but indicate poor credential hygiene. The token is already non-functional, limiting direct risk.",
-					fmt.Sprintf("Token '%s' expired on %s but has not been deleted.", name, expTs.Format(time.RFC3339)),
+					fmt.Sprintf("Token '%s' expired on %s but has not been deleted.", name, expTS.Format(time.RFC3339)),
 					"token", id, name,
 					"Delete expired tokens to reduce credential surface area.",
-					map[string]string{"expired_at": expTs.Format(time.RFC3339)},
+					map[string]string{"expired_at": expTS.Format(time.RFC3339)},
 				))
 			} else {
 				findings = append(findings, pass(
 					"iam-001", "Token Has Expiration", catIAM,
-					fmt.Sprintf("Token '%s' expires on %s.", name, expTs.Format(time.RFC3339)),
+					fmt.Sprintf("Token '%s' expires on %s.", name, expTS.Format(time.RFC3339)),
 					"token", id, name,
 				))
 			}

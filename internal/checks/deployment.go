@@ -122,7 +122,7 @@ func (dc *DeploymentChecks) Run(c *client.Client) []models.Finding {
 
 		// Check: protection bypass rules
 		protBypass := mapVal(p["protectionBypass"])
-		if protBypass != nil && len(protBypass) > 0 {
+		if len(protBypass) > 0 {
 			findings = append(findings, warn(
 				"dep-005", "Deployment Protection Bypass Active", catDeployment, models.High,
 				7.0, "Protection bypass rules create permanent holes in deployment access control. Anyone with the bypass secret can access protected deployments.",
