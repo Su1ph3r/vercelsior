@@ -266,6 +266,18 @@ func (tc *TakeoverChecks) checkDanglingARecord(c *client.Client, projectDomains 
 	return findings
 }
 
+// isVercelManagedAlias reports whether an alias hostname is a Vercel-managed
+// *.vercel.app alias (the auto-generated production / git-branch / deployment
+// aliases such as "<project>-<scope>.vercel.app"). Subdomain takeover (sto-002)
+// requires customer-controlled DNS pointing at Vercel; .vercel.app hostnames have
+// no such DNS (Vercel owns the apex and account-scoped aliases are account-bound),
+// so they are never orphaned-alias takeover candidates and must be skipped to
+// avoid false positives. Only custom-domain aliases remain in scope.
+func isVercelManagedAlias(host string) bool {
+	h := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	return h == "vercel.app" || strings.HasSuffix(h, ".vercel.app")
+}
+
 // checkOrphanedAliases detects aliases not linked to any active project domain (sto-002).
 func (tc *TakeoverChecks) checkOrphanedAliases(c *client.Client, projectDomains map[string]bool) []models.Finding {
 	var findings []models.Finding
@@ -291,6 +303,17 @@ func (tc *TakeoverChecks) checkOrphanedAliases(c *client.Client, projectDomains 
 	for _, a := range aliases {
 		aliasHostname := strings.ToLower(str(a["alias"]))
 		if aliasHostname == "" {
+			continue
+		}
+
+		// Skip Vercel-managed *.vercel.app aliases. These are auto-generated
+		// production/branch/deployment aliases, not custom-domain aliases. They
+		// are NOT subdomain-takeover candidates: Vercel controls the .vercel.app
+		// apex and account-scoped aliases are bound to the owning account, so
+		// there is no customer-controlled DNS to dangle. They also do not appear
+		// in the project-domains set, which previously made every live
+		// deployment alias a false-positive "Orphaned Alias" (sto-002) HIGH.
+		if isVercelManagedAlias(aliasHostname) {
 			continue
 		}
 

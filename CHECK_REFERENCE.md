@@ -175,7 +175,7 @@ Header/file checks emit a `PASS` finding when the control is present and the `FA
 | Check ID | Title | Status | Severity | Risk Score | Description |
 |----------|-------|--------|----------|------------|-------------|
 | sto-001 | Dangling CNAME to Vercel | FAIL | CRITICAL | 9.0 | DNS CNAME pointing to Vercel without a matching project domain. |
-| sto-002 | Orphaned Alias | WARN | HIGH | 7.0 | Alias not linked to any active project domain. |
+| sto-002 | Orphaned Alias | WARN | HIGH | 7.0 | Custom-domain alias not linked to any active project domain. Vercel-managed `*.vercel.app` aliases are excluded (not takeover candidates). |
 | sto-003 | Dangling A Record Pointing to Vercel | FAIL | CRITICAL | 9.0 | A record points to Vercel IP without a matching project domain. |
 
 ## Git & Source Control
