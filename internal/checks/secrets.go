@@ -3,6 +3,7 @@ package checks
 import (
 	"fmt"
 	"math"
+	"net/url"
 	"strings"
 
 	"github.com/Su1ph3r/vercelsior/internal/client"
@@ -37,7 +38,36 @@ var clientExposurePrefixes = []struct {
 	{"NUXT_PUBLIC_", "Nuxt"},
 }
 
+// knownNonSecretNames are environment variables whose names match a sensitive
+// pattern (typically because they contain "AUTH") but which, by framework
+// convention, hold public, non-secret values: canonical site URLs, issuer
+// domains, and host-trust flags. The corresponding real secrets (NEXTAUTH_SECRET,
+// AUTH_SECRET, AUTH0_CLIENT_SECRET, and the like) are deliberately absent here
+// and still match the sensitive patterns. Compared case-insensitively.
+var knownNonSecretNames = map[string]bool{
+	// NextAuth.js / Auth.js
+	"NEXTAUTH_URL":          true, // canonical deployment URL, public
+	"NEXTAUTH_URL_INTERNAL": true, // internal base URL, not a credential
+	"AUTH_URL":              true, // Auth.js v5 canonical URL
+	"AUTH_TRUST_HOST":       true, // boolean host-trust flag
+	// Auth0 SDKs
+	"AUTH0_DOMAIN":          true, // public tenant domain
+	"AUTH0_BASE_URL":        true, // application base URL
+	"AUTH0_ISSUER_BASE_URL": true, // public issuer URL
+	// Vercel system-provided deployment locators
+	"VERCEL_URL":                    true,
+	"VERCEL_BRANCH_URL":             true,
+	"VERCEL_PROJECT_PRODUCTION_URL": true,
+}
+
+func isKnownNonSecretName(name string) bool {
+	return knownNonSecretNames[strings.ToUpper(strings.TrimSpace(name))]
+}
+
 func isSensitiveName(name string) bool {
+	if isKnownNonSecretName(name) {
+		return false
+	}
 	upper := strings.ToUpper(name)
 	for _, pattern := range sensitiveKeyPatterns {
 		if strings.Contains(upper, pattern) {
@@ -45,6 +75,88 @@ func isSensitiveName(name string) bool {
 		}
 	}
 	return false
+}
+
+// hardSecretWords name credential material directly. If any underscore-delimited
+// word of a variable name is one of these, the variable holds a secret whatever
+// its value looks like, so the URL value-shape relaxation must never clear it.
+// This guards against a secret carried in a URL path (e.g. a Slack WEBHOOK_SECRET
+// such as https://hooks.slack.com/services/T/B/XXXX, or a *_TOKEN mistakenly set
+// to a URL), which looksLikeNonSecretURL cannot see. Matching is on whole words,
+// not substrings, so "KEY" does not falsely fire on a name like KEYCLOAK_AUTH_URL.
+var hardSecretWords = map[string]bool{
+	"SECRET": true, "SECRETS": true,
+	"TOKEN": true, "TOKENS": true,
+	"PASSWORD": true, "PASSWD": true, "PASS": true,
+	"CREDENTIAL": true, "CREDENTIALS": true,
+	"PRIVATE": true,
+	"KEY":     true, "KEYS": true, "APIKEY": true,
+	"SIGNING": true, "JWT": true, "BEARER": true,
+	"WEBHOOK": true,
+}
+
+func hasHardSecretWord(name string) bool {
+	for _, word := range strings.Split(strings.ToUpper(name), "_") {
+		if hardSecretWords[word] {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeNonSecretURL reports whether value is a plain web locator: an
+// http/https URL or origin that embeds no credentials. This is what separates a
+// public config URL such as NEXTAUTH_URL ("https://example.com") from a
+// connection string such as DATABASE_URL ("postgres://user:pass@host/db"), whose
+// userinfo carries a password and whose scheme is not web. Only http(s) URLs with
+// no userinfo, query, or fragment qualify, so connection strings and token-bearing
+// URLs are never cleared. Note this cannot detect a secret carried in the URL
+// path; callers must not apply it to names that denote credential material (see
+// hasHardSecretWord).
+func looksLikeNonSecretURL(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	u, err := url.Parse(value)
+	if err != nil {
+		return false
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return false
+	}
+	if u.Host == "" {
+		return false
+	}
+	if u.User != nil { // user[:password]@ means the URL itself is a credential
+		return false
+	}
+	if u.RawQuery != "" || u.Fragment != "" { // a token could hide in ?x=... or #...
+		return false
+	}
+	return true
+}
+
+// isSensitiveEnvVar decides whether an environment variable should be treated as
+// holding a secret. It starts from the name heuristic and, when the decrypted
+// value is available (Vercel only returns it for "plain" type vars), refines the
+// verdict by inspecting the value's shape. This stops public locators like
+// NEXTAUTH_URL or a custom FOO_AUTH_URL from being misreported as plain-text
+// credentials. The value-shape relaxation is applied only to names that do not
+// contain a hard-secret word, so genuine secrets stay classified as sensitive
+// even when their value happens to look like a URL. Without a value it falls back
+// to the name verdict.
+func isSensitiveEnvVar(env map[string]interface{}) bool {
+	key := str(env["key"])
+	if !isSensitiveName(key) {
+		return false
+	}
+	if !hasHardSecretWord(key) {
+		if val := str(env["value"]); val != "" && looksLikeNonSecretURL(val) {
+			return false
+		}
+	}
+	return true
 }
 
 func (sc *SecretsChecks) Run(c *client.Client) []models.Finding {
@@ -99,7 +211,7 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 			envType := str(env["type"]) // "encrypted", "plain", "secret", "sensitive", "system"
 			targets := env["target"]    // array of environments: "production", "preview", "development"
 
-			sensitive := isSensitiveName(envKey)
+			sensitive := isSensitiveEnvVar(env)
 
 			// Check: plain text secret
 			if sensitive && envType == "plain" {
@@ -221,7 +333,7 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 		for _, env := range envVars {
 			envKey := str(env["key"])
 			envID := str(env["id"])
-			if isSensitiveName(envKey) {
+			if isSensitiveEnvVar(env) {
 				gitBranch := str(env["gitBranch"])
 				if gitBranch == "" {
 					targets := toStringSlice(env["target"])
@@ -243,7 +355,7 @@ func (sc *SecretsChecks) checkProjectEnvVars(c *client.Client) []models.Finding 
 		for _, env := range envVars {
 			envKey := str(env["key"])
 			envID := str(env["id"])
-			if isSensitiveName(envKey) {
+			if isSensitiveEnvVar(env) {
 				targets := toStringSlice(env["target"])
 				hasProd := contains(targets, "production")
 				hasPreview := contains(targets, "preview")
@@ -285,7 +397,7 @@ func (sc *SecretsChecks) checkSharedEnvVars(c *client.Client) []models.Finding {
 		envKey := str(env["key"])
 		envID := str(env["id"])
 		envType := str(env["type"])
-		sensitive := isSensitiveName(envKey)
+		sensitive := isSensitiveEnvVar(env)
 
 		// Shared env vars linked to many projects
 		if linkedProjects, ok := env["projectId"].([]interface{}); ok && len(linkedProjects) > 10 {
