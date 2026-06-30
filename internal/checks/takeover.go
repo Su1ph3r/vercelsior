@@ -15,6 +15,16 @@ var vercelIPs = map[string]bool{
 	"76.76.21.98": true,
 }
 
+// isVercelCNAMETarget reports whether a CNAME value points at Vercel's DNS
+// target. Vercel uses cname.vercel-dns.com and other hosts under vercel-dns.com.
+// Matching the real target on a domain boundary, rather than the bare substring
+// "vercel", avoids flagging unrelated third-party hosts such as
+// "status.vercelstatus.com" or "notvercel.example.com" as dangling takeovers.
+// The value should be normalized (lower-cased, trailing dot stripped) first.
+func isVercelCNAMETarget(value string) bool {
+	return value == "cname.vercel-dns.com" || strings.HasSuffix(value, ".vercel-dns.com")
+}
+
 type TakeoverChecks struct{}
 
 func (tc *TakeoverChecks) Name() string     { return "Takeover" }
@@ -77,9 +87,8 @@ func (tc *TakeoverChecks) collectProjectDomains(c *client.Client) (map[string]bo
 			return nil, fmt.Errorf("listing domains for project %s: %w", projID, err)
 		}
 		for _, d := range domains {
-			name := str(d["name"])
-			if name != "" {
-				set[strings.ToLower(name)] = true
+			if name := normalizeDomain(str(d["name"])); name != "" {
+				set[name] = true
 			}
 		}
 	}
@@ -136,22 +145,22 @@ func (tc *TakeoverChecks) checkDanglingCNAME(c *client.Client, projectDomains ma
 				continue
 			}
 
-			recValue := strings.ToLower(str(r["value"]))
-			if !strings.Contains(recValue, "vercel") {
+			recValue := normalizeDomain(str(r["value"]))
+			if !isVercelCNAMETarget(recValue) {
 				continue
 			}
 
 			recName := str(r["name"])
 			var fqdn string
 			if recName == "" || recName == "@" {
-				fqdn = strings.ToLower(domainName)
+				fqdn = normalizeDomain(domainName)
 			} else {
-				fqdn = strings.ToLower(recName + "." + domainName)
+				fqdn = normalizeDomain(recName + "." + domainName)
 			}
 
 			recID := str(r["id"])
 
-			if !projectDomains[fqdn] {
+			if !domainClaimed(projectDomains, fqdn) {
 				findings = append(findings, fail(
 					"sto-001", "Dangling CNAME to Vercel", catTakeover, models.Critical,
 					9.0,
@@ -234,14 +243,14 @@ func (tc *TakeoverChecks) checkDanglingARecord(c *client.Client, projectDomains 
 			recName := str(r["name"])
 			var fqdn string
 			if recName == "" || recName == "@" {
-				fqdn = strings.ToLower(domainName)
+				fqdn = normalizeDomain(domainName)
 			} else {
-				fqdn = strings.ToLower(recName + "." + domainName)
+				fqdn = normalizeDomain(recName + "." + domainName)
 			}
 
 			recID := str(r["id"])
 
-			if !projectDomains[fqdn] {
+			if !domainClaimed(projectDomains, fqdn) {
 				f := fail(
 					"sto-003", "Dangling A Record Pointing to Vercel", catTakeover,
 					models.Critical, 9.0,
@@ -319,7 +328,7 @@ func (tc *TakeoverChecks) checkOrphanedAliases(c *client.Client, projectDomains 
 
 		aliasID := str(a["uid"])
 
-		if !projectDomains[aliasHostname] {
+		if !domainClaimed(projectDomains, aliasHostname) {
 			f := warn(
 				"sto-002", "Orphaned Alias", catTakeover, models.High,
 				7.0,

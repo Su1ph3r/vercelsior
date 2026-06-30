@@ -15,22 +15,27 @@ type StorageChecks struct{}
 func (sc *StorageChecks) Name() string     { return "Storage" }
 func (sc *StorageChecks) Category() string { return catStorage }
 
-// storageEnvPatterns are environment variable name patterns that indicate
-// Vercel managed storage (KV, Postgres, Blob).
+// storageEnvPatterns are the environment variable names that Vercel managed
+// storage (KV, Postgres, Blob) injects. Matching is on a delimiter boundary
+// (hasAnySegmentSuffix), so every full name a project may use must be listed
+// explicitly: POSTGRES_URL does not cover POSTGRES_URL_NON_POOLING, because the
+// latter has POSTGRES_URL as an infix, not a suffix. The connection-string and
+// token variants below all carry live credentials.
 var storageEnvPatterns = []string{
-	"KV_URL", "KV_REST_API_URL", "KV_REST_API_TOKEN",
-	"POSTGRES_URL", "POSTGRES_HOST", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DATABASE",
+	// KV (Upstash Redis)
+	"KV_URL", "KV_REST_API_URL", "KV_REST_API_TOKEN", "KV_REST_API_READ_ONLY_TOKEN",
+	// Postgres (Neon), including the pooling/Prisma/no-SSL connection strings
+	"POSTGRES_URL", "POSTGRES_PRISMA_URL", "POSTGRES_URL_NON_POOLING", "POSTGRES_URL_NO_SSL",
+	"POSTGRES_HOST", "POSTGRES_USER", "POSTGRES_PASSWORD", "POSTGRES_DATABASE",
+	// Blob
 	"BLOB_READ_WRITE_TOKEN",
 }
 
 func isStorageEnvVar(key string) bool {
-	upper := strings.ToUpper(key)
-	for _, pattern := range storageEnvPatterns {
-		if strings.Contains(upper, pattern) {
-			return true
-		}
-	}
-	return false
+	// Match on a delimiter boundary so a Vercel-prefixed storage var such as
+	// MYDB_POSTGRES_URL is recognized, while OLD_POSTGRES_URL_BACKUP (a copy that
+	// is not the live storage binding) is not.
+	return hasAnySegmentSuffix(key, storageEnvPatterns...)
 }
 
 func (sc *StorageChecks) Run(c *client.Client) []models.Finding {

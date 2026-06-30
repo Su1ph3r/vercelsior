@@ -21,7 +21,7 @@ Header/file checks emit a `PASS` finding when the control is present and the `FA
 | iam-003 | Leaked Token Detected | FAIL | CRITICAL | 10.0 | A confirmed credential leak with verified exposure URL. |
 | iam-004 | Stale Token | WARN | MEDIUM | 5.0 | Token has not been used in over 90 days. |
 | iam-005 | Token With Full Access Scope | WARN | HIGH | 8.0 | Token has no scope restrictions (full access). |
-| iam-010 | SSO/SAML Not Configured | FAIL | HIGH | 7.0 | Team does not have SAML/SSO configured. |
+| iam-010 | SSO/SAML Not Configured | WARN | LOW | 3.0 | Team does not have SAML/SSO configured (Enterprise-tier feature; recommendation, not a confirmed gap). |
 | iam-011 | SSO Not Enforced | WARN | MEDIUM | 6.0 | SSO configured but members can bypass it. |
 | iam-012 | Email Domain Auto-Join Enabled | WARN | MEDIUM | 6.0 | Anyone with a matching email domain can join the team. |
 | iam-013 | Active Invite Code | WARN | MEDIUM | 5.0 | Team has an active invite code that could be shared. |
@@ -44,7 +44,8 @@ Header/file checks emit a `PASS` finding when the control is present and the `FA
 | fw-001 | Firewall Not Configured | FAIL | HIGH | 8.0 | No WAF means all traffic is uninspected. |
 | fw-002 | Firewall Disabled | FAIL | HIGH | 8.0 | WAF exists but is turned off. |
 | fw-003 | OWASP Core Rule Set Not Configured | FAIL | HIGH | 7.0 | No OWASP CRS configuration present. |
-| fw-003-{cat} | OWASP {Category} Rules Disabled | FAIL | HIGH | 7.0 | Specific OWASP category disabled (sqli, xss, rce, lfi, rfi, gen, ma, sf, sd, php, java). |
+| fw-003 | OWASP Core Rule Set Categories Disabled | FAIL | HIGH | 7.0 | One aggregated finding listing the explicitly-disabled OWASP categories (sqli, xss, rce, lfi, rfi, gen, ma, sf, sd, php, java). |
+| fw-003-unconfirmed | OWASP Core Rule Set Categories Not Reported | WARN | LOW | 2.0 | OWASP categories absent from the firewall config response; enabled state could not be confirmed. |
 | fw-004 | No Managed Rules Configured | FAIL | HIGH | 7.0 | No managed WAF rules configured. |
 | fw-004-{key} | Managed Rule: {Name} Disabled | WARN | varies | varies | Specific managed rule set disabled (owasp, bot_protection, ai_bots, vercel_ruleset). |
 | fw-005 | No Custom WAF Rules | WARN | LOW | 3.0 | No custom WAF rules for rate limiting or geo-blocking. |
@@ -96,7 +97,7 @@ Header/file checks emit a `PASS` finding when the control is present and the `FA
 
 | Check ID | Title | Status | Severity | Risk Score | Description |
 |----------|-------|--------|----------|------------|-------------|
-| dom-001 | Unverified Domain | FAIL | HIGH | 7.0 | Domain not verified, could be claimed by others. |
+| dom-001 | Unverified Domain | WARN | LOW | 3.0 | Domain verification incomplete; it will not serve traffic until verified (usually an unfinished setup step). |
 | dom-002 | Domain Expired | FAIL | CRITICAL | 10.0 | Expired domain can be re-registered by attackers. |
 | dom-003 | Domain Expiring Soon | WARN | HIGH | 7.0 | Domain expires within 30 days. |
 | dom-004 | Domain Expiring Within 90 Days | WARN | MEDIUM | 4.0 | Domain expires within 90 days. |
@@ -191,7 +192,7 @@ Header/file checks emit a `PASS` finding when the control is present and the `FA
 | Check ID | Title | Status | Severity | Risk Score | Description |
 |----------|-------|--------|----------|------------|-------------|
 | flag-001 | Feature Flag With Security-Sensitive Name | WARN | MEDIUM | 6.0 | Flag name matches sensitive patterns (admin, bypass, debug, etc.). |
-| flag-002 | Feature Flag Overrides in Production | WARN | HIGH | 7.0 | Active overrides or rules affecting production. |
+| flag-002 | Overrides on a Security-Sensitive Feature Flag | WARN | MEDIUM | 5.0 | Active overrides or rules on a flag whose name is security-sensitive (flag-001 matched). |
 
 ## Certificates & TLS
 
@@ -208,7 +209,8 @@ Header/file checks emit a `PASS` finding when the control is present and the `FA
 | route-001 | Open Redirect in Bulk Redirects | FAIL | HIGH | 8.0 | Bulk redirect may enable open redirect attacks. |
 | route-002 | Wildcard Route Proxying to External Origin | FAIL | HIGH | 7.0 | Wildcard route proxies traffic to external destination. |
 | route-003 | Rewrite Proxying to External Origin | WARN | MEDIUM | 6.0 | Route rewrites to external origin. |
-| route-004 | Rewrite Destination Points to Internal Target | FAIL | HIGH | 8.0 | Route destination points to internal IP, localhost, or cloud metadata endpoint (SSRF). |
+| route-004 | Rewrite Destination Points to Cloud Metadata | FAIL | HIGH | 8.0 | Rewrite/proxy destination is a cloud instance-metadata endpoint (SSRF to IMDS). Applies to rewrites/proxies, not client-side redirects. |
+| route-007 | Rewrite Destination Points to a Private Address | WARN | LOW | 3.0 | Rewrite/proxy destination is a loopback/RFC-1918/unspecified address (usually an intentional internal proxy; confirm it is intended). |
 
 ## Security Headers
 

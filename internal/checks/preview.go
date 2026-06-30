@@ -15,6 +15,51 @@ type PreviewChecks struct{}
 func (pc *PreviewChecks) Name() string     { return "Preview" }
 func (pc *PreviewChecks) Category() string { return catPreview }
 
+// pipesIntoShell reports whether a (lower-cased) command pipes into a shell
+// interpreter. It inspects the first token of each piped segment, so "curl x | sh"
+// matches while "cat x | shasum" and "build | tee log" do not.
+func pipesIntoShell(lc string) bool {
+	segs := strings.Split(lc, "|")
+	for _, seg := range segs[1:] {
+		seg = strings.TrimSpace(seg)
+		tok := seg
+		if i := strings.IndexAny(seg, " \t"); i >= 0 {
+			tok = seg[:i]
+		}
+		switch tok {
+		case "sh", "bash", "zsh", "dash", "ksh":
+			return true
+		}
+	}
+	return false
+}
+
+// dangerousCommandReason returns a short description when a build/install command
+// contains a genuinely dangerous construct, or "" otherwise. It intentionally
+// ignores bare shell metacharacters (|, >, $(), backticks): pipes and redirects
+// appear in a large fraction of legitimate build commands (e.g. "next build >
+// build.log" or "build | tee out"), so flagging them produced near-universal
+// false positives. It flags arbitrary-execution primitives (eval, sh -c) and the
+// fetch-and-pipe-to-shell pattern, which is the actual fork-PR exfiltration vector.
+func dangerousCommandReason(cmd string) string {
+	if cmd == "" {
+		return ""
+	}
+	lc := strings.ToLower(cmd)
+	if pipesIntoShell(lc) {
+		if strings.Contains(lc, "curl") || strings.Contains(lc, "wget") {
+			return "fetches and pipes a remote script into a shell (curl/wget | sh)"
+		}
+		return "pipes output directly into a shell"
+	}
+	for _, p := range []string{"eval ", "eval(", "bash -c", "sh -c", "zsh -c"} {
+		if strings.Contains(lc, p) {
+			return "uses an arbitrary-execution primitive (" + strings.TrimSpace(p) + ")"
+		}
+	}
+	return ""
+}
+
 func (pc *PreviewChecks) Run(c *client.Client) []models.Finding {
 	var findings []models.Finding
 
@@ -36,7 +81,6 @@ func (pc *PreviewChecks) Run(c *client.Client) []models.Finding {
 		return findings
 	}
 
-	dangerousPatterns := []string{"curl", "wget", "eval", "bash -c", "sh -c", "|", ">", "$(", "`"}
 	permSeen := make(map[string]bool)
 
 	for _, p := range projects {
@@ -79,13 +123,11 @@ func (pc *PreviewChecks) Run(c *client.Client) []models.Finding {
 		installCmd := str(p["installCommand"])
 
 		var flaggedCmds []string
-		for _, pattern := range dangerousPatterns {
-			if buildCmd != "" && strings.Contains(buildCmd, pattern) {
-				flaggedCmds = append(flaggedCmds, fmt.Sprintf("buildCommand contains '%s'", pattern))
-			}
-			if installCmd != "" && strings.Contains(installCmd, pattern) {
-				flaggedCmds = append(flaggedCmds, fmt.Sprintf("installCommand contains '%s'", pattern))
-			}
+		if d := dangerousCommandReason(buildCmd); d != "" {
+			flaggedCmds = append(flaggedCmds, "buildCommand "+d)
+		}
+		if d := dangerousCommandReason(installCmd); d != "" {
+			flaggedCmds = append(flaggedCmds, "installCommand "+d)
 		}
 
 		if len(flaggedCmds) > 0 {

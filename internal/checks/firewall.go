@@ -2,6 +2,7 @@ package checks
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Su1ph3r/vercelsior/internal/client"
 	"github.com/Su1ph3r/vercelsior/internal/models"
@@ -117,19 +118,41 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 				{"php", "PHP Injection"},
 				{"java", "Java Attacks"},
 			}
+			// Aggregate OWASP category status into at most two findings rather than
+			// emitting one High per category (which produced up to 11 per project).
+			// An explicit enabled:false is a confirmed-disabled category (High). A
+			// key missing from the response is "unconfirmed": block is the platform
+			// default, but we cannot prove it is enabled, so it is surfaced as a
+			// Low finding rather than silently dropped.
+			var disabled, unconfirmed []string
 			for _, cat := range owaspCategories {
 				rule := mapVal(crs[cat.key])
-				if rule == nil || !boolean(rule["enabled"]) {
-					findings = append(findings, fail(
-						fmt.Sprintf("fw-003-%s", cat.key), fmt.Sprintf("OWASP %s Rules Disabled", cat.name),
-						catFirewall, models.High,
-						7.0, "Disabling this OWASP category removes protection against a specific, well-known attack class that is actively exploited in the wild.",
-						fmt.Sprintf("Project '%s': OWASP %s protection is disabled.", projName, cat.name),
-						"project", projID, projName,
-						fmt.Sprintf("Enable OWASP %s rules in the firewall CRS configuration.", cat.name),
-						map[string]string{"rule_category": cat.key},
-					))
+				switch {
+				case rule == nil:
+					unconfirmed = append(unconfirmed, cat.name)
+				case !boolean(rule["enabled"]):
+					disabled = append(disabled, cat.name)
 				}
+			}
+			if len(disabled) > 0 {
+				findings = append(findings, fail(
+					"fw-003", "OWASP Core Rule Set Categories Disabled", catFirewall, models.High,
+					7.0, "Disabling an OWASP CRS category removes protection against a specific, well-known attack class. Some categories may be irrelevant to a given stack, but each disabled category is worth confirming.",
+					fmt.Sprintf("Project '%s' has OWASP CRS categories disabled: %s.", projName, strings.Join(disabled, ", ")),
+					"project", projID, projName,
+					"Review the disabled OWASP CRS categories and enable those relevant to your application.",
+					map[string]string{"disabled_categories": strings.Join(disabled, ",")},
+				))
+			}
+			if len(unconfirmed) > 0 {
+				findings = append(findings, warn(
+					"fw-003-unconfirmed", "OWASP Core Rule Set Categories Not Reported", catFirewall, models.Low,
+					2.0, "These OWASP CRS categories were not present in the firewall configuration response, so their enabled state could not be confirmed. They are likely on by default, but verify them directly.",
+					fmt.Sprintf("Project '%s' has OWASP CRS categories whose status could not be confirmed: %s.", projName, strings.Join(unconfirmed, ", ")),
+					"project", projID, projName,
+					"Verify these OWASP CRS categories are enabled in the firewall configuration.",
+					map[string]string{"unconfirmed_categories": strings.Join(unconfirmed, ",")},
+				))
 			}
 
 			// fw-010: Check if enabled OWASP rules are in block mode

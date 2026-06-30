@@ -11,20 +11,30 @@ func TestIsStorageEnvVar(t *testing.T) {
 		{"KV_URL", true},
 		{"KV_REST_API_URL", true},
 		{"KV_REST_API_TOKEN", true},
+		{"KV_REST_API_READ_ONLY_TOKEN", true},
 		{"POSTGRES_URL", true},
 		{"POSTGRES_PASSWORD", true},
 		{"BLOB_READ_WRITE_TOKEN", true},
 
-		// Prefix / contains — matches because the check uses Contains on uppercase.
+		// Postgres connection-string variants Vercel injects (all carry creds).
+		// POSTGRES_URL_NON_POOLING has POSTGRES_URL as an INFIX, so it must be its
+		// own pattern; suffix matching alone would miss it (regression guard).
+		{"POSTGRES_URL_NON_POOLING", true},
+		{"POSTGRES_PRISMA_URL", true},
+		{"POSTGRES_URL_NO_SSL", true},
+
+		// Vercel allows a custom prefix on the binding; match on a segment boundary.
 		{"MY_KV_URL", true},
 		{"CUSTOM_POSTGRES_HOST", true},
+		{"MYDB_POSTGRES_URL_NON_POOLING", true},
 		{"my_postgres_url", true}, // case-insensitive
 
-		// Non-storage variables
+		// Non-storage variables and infix-not-suffix lookalikes.
 		{"NEXT_PUBLIC_API_URL", false},
 		{"NODE_ENV", false},
 		{"DATABASE_URL", false}, // not a Vercel managed storage var
 		{"STRIPE_SECRET_KEY", false},
+		{"OLD_POSTGRES_URL_BACKUP", false}, // a copy, not the live binding
 		{"", false},
 	}
 	for _, tc := range cases {

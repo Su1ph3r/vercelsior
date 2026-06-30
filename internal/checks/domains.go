@@ -51,15 +51,19 @@ func (dc *DomainChecks) checkDomains(c *client.Client) []models.Finding {
 		name := str(d["name"])
 		domainID := name
 
-		// Check: domain verification
+		// Check: domain verification. An unverified domain is the normal transient
+		// state of every domain just after it is added (verification pending), and
+		// Vercel will not serve traffic for it until verified. It does not mean your
+		// registered domain can be claimed by an attacker, so this is a low-severity
+		// "finish verification" prompt, not a High takeover finding.
 		verified := boolean(d["verified"])
 		if !verified {
-			findings = append(findings, fail(
-				"dom-001", "Unverified Domain", catDomains, models.High,
-				7.0, "Unverified domains can be claimed by attackers, enabling phishing or traffic interception on your brand's domain.",
-				fmt.Sprintf("Domain '%s' is not verified. Unverified domains may not serve traffic correctly and could be claimed by others.", name),
+			findings = append(findings, warn(
+				"dom-001", "Unverified Domain", catDomains, models.Low,
+				3.0, "An unverified domain will not serve traffic until ownership is confirmed. This is usually a configuration step left incomplete rather than a security exposure.",
+				fmt.Sprintf("Domain '%s' is not verified and will not serve traffic until verification is completed.", name),
 				"domain", domainID, name,
-				"Verify domain ownership through DNS TXT record or CNAME configuration.",
+				"Complete domain verification through the DNS TXT record or CNAME configuration shown in the Vercel dashboard.",
 				nil,
 			))
 		} else {
@@ -119,20 +123,13 @@ func (dc *DomainChecks) checkDomains(c *client.Client) []models.Finding {
 			}
 		}
 
-		// Check: domain transfer lock (registrar-managed domains)
-		if transferable, ok := d["transferable"]; ok {
-			if boolean(transferable) {
-				findings = append(findings, warn(
-					"dom-031", "Domain Transfer Lock Not Enabled", catDomains, models.Medium,
-					6.0, "Without transfer lock, an attacker with registrar access can transfer the domain away, enabling complete domain takeover.",
-					fmt.Sprintf("Domain '%s' does not have transfer lock enabled.", name),
-					"domain", domainID, name,
-					"Enable domain transfer lock to prevent unauthorized domain transfers.",
-					nil,
-				))
-			}
-		}
-		// Also check via serviceType or locked fields
+		// Check: domain transfer lock. Use the authoritative `locked` field only,
+		// and only when it is explicitly present and false. The previous code also
+		// flagged on `transferable == true`, but for an externally-registered domain
+		// that flag means "eligible to transfer in" (a normal state Vercel cannot
+		// control), not a missing lock, and the two branches double-reported the
+		// same domain. An absent `locked` field is "unknown" (Vercel does not manage
+		// the registrar), so it is left unflagged.
 		if locked, ok := d["locked"]; ok {
 			if !boolean(locked) {
 				findings = append(findings, warn(
@@ -329,7 +326,13 @@ func (dc *DomainChecks) checkDNS(c *client.Client) []models.Finding {
 				if strings.HasPrefix(val, "v=spf1") {
 					hasSPF = true
 				}
-				if str(r["name"]) == "_dmarc" {
+				// A DMARC record's name may be returned relative ("_dmarc") or
+				// absolute ("_dmarc.example.com"), with or without a trailing dot.
+				// Match all forms, and also accept any TXT whose value is a DMARC
+				// policy, so a present record is never reported as missing.
+				recName := strings.ToLower(strings.TrimSuffix(str(r["name"]), "."))
+				if recName == "_dmarc" || recName == "_dmarc."+strings.ToLower(name) ||
+					strings.HasPrefix(strings.ToLower(val), "v=dmarc1") {
 					hasDMARC = true
 				}
 			}
