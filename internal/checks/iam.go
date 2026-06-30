@@ -215,15 +215,19 @@ func (ic *IAMChecks) checkTeams(c *client.Client) []models.Finding {
 
 		teamAPIPath := fmt.Sprintf("/v2/teams/%s", teamID)
 
-		// Check: SAML/SSO not configured
+		// Check: SAML/SSO not configured. SAML SSO is an Enterprise-tier feature,
+		// so an absent `saml` object is the normal state for the large majority of
+		// (Hobby/Pro) accounts that cannot configure it. Report it as a low-severity
+		// recommendation rather than a HIGH finding that would fire on nearly every
+		// non-Enterprise team.
 		saml := mapVal(team["saml"])
 		if saml == nil {
-			f := fail(
-				"iam-010", "SSO/SAML Not Configured", catIAM, models.High,
-				7.0, "Without SSO, there is no centralized authentication enforcement. Members may use weak passwords without MFA.",
-				fmt.Sprintf("Team '%s' does not have SAML/SSO configured.", teamName),
+			f := warn(
+				"iam-010", "SSO/SAML Not Configured", catIAM, models.Low,
+				3.0, "Centralized SSO enforces authentication and MFA through your identity provider. It is an Enterprise-tier feature, so this is a recommendation rather than a confirmed gap.",
+				fmt.Sprintf("Team '%s' does not have SAML/SSO configured. If on an Enterprise plan, consider enabling it.", teamName),
 				"team", teamID, teamName,
-				"Enable SAML SSO for centralized identity management and enforce MFA through your identity provider.",
+				"If your plan supports SAML SSO, enable it for centralized identity management and MFA enforcement.",
 				nil,
 			)
 			f.PocEvidence = []models.PocEvidence{buildEvidence(c, teamAPIPath, team, []string{"name", "slug", "saml"}, "Team has no SAML/SSO configured")}
@@ -273,9 +277,13 @@ func (ic *IAMChecks) checkTeams(c *client.Client) []models.Finding {
 			))
 		}
 
-		// Check: sensitive environment variable policy
+		// Check: sensitive environment variable policy. Only an explicit "off"
+		// is a confirmed-disabled state. An empty/absent value means the API did
+		// not report the control (e.g. the plan does not expose it), which is
+		// "unknown", not "disabled". Flagging it produced a false HIGH on every
+		// account where the field is simply not modeled.
 		policy := str(team["sensitiveEnvironmentVariablePolicy"])
-		if policy == "" || policy == "off" {
+		if policy == "off" {
 			f := fail(
 				"iam-014", "Sensitive Env Var Policy Not Enforced", catIAM, models.High,
 				7.0, "Without policy enforcement, sensitive values can be stored insecurely or exposed to non-production environments.",

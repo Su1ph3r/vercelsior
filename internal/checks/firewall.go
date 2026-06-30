@@ -2,6 +2,7 @@ package checks
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/Su1ph3r/vercelsior/internal/client"
 	"github.com/Su1ph3r/vercelsior/internal/models"
@@ -117,19 +118,27 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 				{"php", "PHP Injection"},
 				{"java", "Java Attacks"},
 			}
+			// Aggregate disabled OWASP categories into a single finding rather than
+			// emitting one High per category (which produced up to 11 findings per
+			// project). Only an explicit enabled:false is a confirmed-disabled
+			// category; a key missing from the response is "unknown" (block is the
+			// platform default), not a disabled protection, so it is not flagged.
+			var disabled []string
 			for _, cat := range owaspCategories {
 				rule := mapVal(crs[cat.key])
-				if rule == nil || !boolean(rule["enabled"]) {
-					findings = append(findings, fail(
-						fmt.Sprintf("fw-003-%s", cat.key), fmt.Sprintf("OWASP %s Rules Disabled", cat.name),
-						catFirewall, models.High,
-						7.0, "Disabling this OWASP category removes protection against a specific, well-known attack class that is actively exploited in the wild.",
-						fmt.Sprintf("Project '%s': OWASP %s protection is disabled.", projName, cat.name),
-						"project", projID, projName,
-						fmt.Sprintf("Enable OWASP %s rules in the firewall CRS configuration.", cat.name),
-						map[string]string{"rule_category": cat.key},
-					))
+				if rule != nil && !boolean(rule["enabled"]) {
+					disabled = append(disabled, cat.name)
 				}
+			}
+			if len(disabled) > 0 {
+				findings = append(findings, fail(
+					"fw-003", "OWASP Core Rule Set Categories Disabled", catFirewall, models.High,
+					7.0, "Disabling an OWASP CRS category removes protection against a specific, well-known attack class. Some categories may be irrelevant to a given stack, but each disabled category is worth confirming.",
+					fmt.Sprintf("Project '%s' has OWASP CRS categories disabled: %s.", projName, strings.Join(disabled, ", ")),
+					"project", projID, projName,
+					"Review the disabled OWASP CRS categories and enable those relevant to your application.",
+					map[string]string{"disabled_categories": strings.Join(disabled, ",")},
+				))
 			}
 
 			// fw-010: Check if enabled OWASP rules are in block mode

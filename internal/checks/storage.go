@@ -24,13 +24,10 @@ var storageEnvPatterns = []string{
 }
 
 func isStorageEnvVar(key string) bool {
-	upper := strings.ToUpper(key)
-	for _, pattern := range storageEnvPatterns {
-		if strings.Contains(upper, pattern) {
-			return true
-		}
-	}
-	return false
+	// Match on a delimiter boundary so a Vercel-prefixed storage var such as
+	// MYDB_POSTGRES_URL is recognized, while OLD_POSTGRES_URL_BACKUP (a copy that
+	// is not the live storage binding) is not.
+	return hasAnySegmentSuffix(key, storageEnvPatterns...)
 }
 
 func (sc *StorageChecks) Run(c *client.Client) []models.Finding {

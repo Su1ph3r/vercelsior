@@ -12,51 +12,62 @@ import (
 
 const catRoutes = "Routes & Redirects"
 
-// isInternalDestination checks whether a rewrite/redirect destination points to
-// an internal IP address, localhost, or a cloud metadata endpoint.
-func isInternalDestination(dest string) bool {
-	// Use net/url.Parse for correct RFC 3986 handling (userinfo, IPv6, etc.)
+// destHost extracts the lower-cased hostname from a rewrite/redirect destination,
+// or "" if it cannot be parsed.
+func destHost(dest string) string {
 	parsed, err := url.Parse(dest)
 	if err != nil {
-		return false
+		return ""
 	}
+	return strings.ToLower(parsed.Hostname())
+}
 
-	host := strings.ToLower(parsed.Hostname())
+// isMetadataDestination reports whether a destination points at a cloud
+// instance-metadata endpoint. This is the genuinely dangerous subset of internal
+// destinations: a rewrite that proxies to the metadata service can expose cloud
+// credentials (SSRF to IMDS). It is kept separate from generic private/loopback
+// destinations, which are usually a deliberate internal proxy rather than a vuln.
+func isMetadataDestination(dest string) bool {
+	host := destHost(dest)
 	if host == "" {
 		return false
 	}
-
-	// Check known internal hostnames
-	if host == "localhost" || host == "metadata.google.internal" {
+	if host == "metadata.google.internal" {
 		return true
 	}
-
-	// Check known metadata IPs
-	knownIPs := []string{"127.0.0.1", "::1", "169.254.169.254", "100.100.100.200"}
-	for _, known := range knownIPs {
-		if host == known {
-			return true
-		}
+	// Known instance-metadata IPs (AWS/GCP/Azure 169.254.169.254, Alibaba
+	// 100.100.100.200) plus the whole link-local range where IMDS lives.
+	if host == "169.254.169.254" || host == "100.100.100.200" {
+		return true
 	}
-
-	// Parse as IP and check private/reserved ranges
 	ip := net.ParseIP(host)
 	if ip == nil {
 		return false
 	}
+	return ip.IsLinkLocalUnicast()
+}
 
-	if ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+// isPrivateDestination reports whether a destination points at a loopback or
+// RFC-1918/ULA private address. Such a destination in a static, operator-authored
+// route is typically an intentional internal proxy (e.g. Vercel Secure Compute),
+// not an attacker-controlled SSRF, so callers should treat it as informational.
+// Metadata endpoints are reported by isMetadataDestination instead.
+func isPrivateDestination(dest string) bool {
+	host := destHost(dest)
+	if host == "" || host == "metadata.google.internal" {
+		return false
+	}
+	if host == "localhost" {
 		return true
 	}
-
-	// Also check cloud metadata range explicitly (not covered by IsPrivate)
-	metadataRange := "169.254.0.0/16"
-	_, network, err := net.ParseCIDR(metadataRange)
-	if err == nil && network.Contains(ip) {
-		return true
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
 	}
-
-	return false
+	if ip.IsLinkLocalUnicast() { // reported by isMetadataDestination
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate()
 }
 
 type RouteChecks struct{}
@@ -151,18 +162,10 @@ func (r *RouteChecks) Run(c *client.Client) []models.Finding {
 					))
 				}
 
-				// route-004: Rewrite Destination Points to Internal Target
-				if isInternalDestination(destination) {
-					findings = append(findings, fail(
-						"route-004", "Rewrite Destination Points to Internal Target", catRoutes,
-						models.High, 8.0,
-						"Rewrites or redirects pointing to internal IP addresses, localhost, or cloud metadata endpoints can be exploited for Server-Side Request Forgery (SSRF), potentially exposing cloud credentials or internal services.",
-						fmt.Sprintf("Project '%s': route destination '%s' points to an internal or metadata address.", projName, destination),
-						"project", projID, projName,
-						"Remove the rewrite/redirect or change the destination to a public endpoint. If internal access is required, use Vercel Secure Compute.",
-						map[string]string{"destination": destination, "source": source},
-					))
-				}
+				// A bulk redirect emits a client-side 3xx; the server never fetches
+				// the destination, so a redirect to an internal/metadata address is
+				// not SSRF. The SSRF check (route-004) is applied to rewrites/proxies
+				// below, not here.
 			}
 		}
 
@@ -207,14 +210,24 @@ func (r *RouteChecks) Run(c *client.Client) []models.Finding {
 			if src == "" {
 				src = str(route["source"])
 			}
-			if isInternalDestination(dest) {
+			if isMetadataDestination(dest) {
 				findings = append(findings, fail(
-					"route-004", "Rewrite Destination Points to Internal Target", catRoutes,
+					"route-004", "Rewrite Destination Points to Cloud Metadata", catRoutes,
 					models.High, 8.0,
-					"Rewrites or redirects pointing to internal IP addresses, localhost, or cloud metadata endpoints can be exploited for Server-Side Request Forgery (SSRF), potentially exposing cloud credentials or internal services.",
-					fmt.Sprintf("Project '%s': route destination '%s' points to an internal or metadata address.", projName, dest),
+					"A rewrite/proxy whose destination is a cloud instance-metadata endpoint can be exploited for Server-Side Request Forgery (SSRF), exposing cloud credentials and internal instance data.",
+					fmt.Sprintf("Project '%s': route destination '%s' points to a cloud metadata endpoint.", projName, dest),
 					"project", projID, projName,
-					"Remove the rewrite/redirect or change the destination to a public endpoint. If internal access is required, use Vercel Secure Compute.",
+					"Remove the rewrite or change the destination to a public endpoint. A proxy to the metadata service is almost never intentional.",
+					map[string]string{"destination": dest, "source": src},
+				))
+			} else if isPrivateDestination(dest) {
+				findings = append(findings, warn(
+					"route-007", "Rewrite Destination Points to a Private Address", catRoutes,
+					models.Low, 3.0,
+					"A rewrite/proxy to a loopback or RFC-1918 private address is usually a deliberate internal proxy (e.g. Vercel Secure Compute), but it is worth confirming the destination is intended and not reachable as an open proxy.",
+					fmt.Sprintf("Project '%s': route destination '%s' points to a private/internal address.", projName, dest),
+					"project", projID, projName,
+					"Confirm this internal proxy is intentional. If internal access is required, prefer Vercel Secure Compute with restricted networking.",
 					map[string]string{"destination": dest, "source": src},
 				))
 			}

@@ -20,6 +20,27 @@ var sensitivePatterns = []string{
 	"maintenance", "disable-auth", "skip-auth",
 }
 
+// matchedSensitiveFlagWord returns the first sensitive pattern that matches the
+// flag name or key, or "" if none. Single-word patterns are matched on whole name
+// segments (so "administrator-onboarding" and "new-debugger-tab" no longer match
+// "admin"/"debug"); compound patterns that already contain a delimiter (e.g.
+// "disable-auth") are specific enough to match as a substring.
+func matchedSensitiveFlagWord(name, key string) string {
+	combined := strings.ToLower(name + " " + key)
+	for _, pattern := range sensitivePatterns {
+		if strings.ContainsAny(pattern, "-_") {
+			if strings.Contains(combined, pattern) {
+				return pattern
+			}
+			continue
+		}
+		if hasWholeSegment(combined, pattern) {
+			return pattern
+		}
+	}
+	return ""
+}
+
 func (f *FeatureFlagChecks) Run(c *client.Client) []models.Finding {
 	var findings []models.Finding
 
@@ -75,21 +96,21 @@ func (f *FeatureFlagChecks) Run(c *client.Client) []models.Finding {
 				displayName = flagKey
 			}
 
-			// flag-001: Security-sensitive name check
-			combined := strings.ToLower(flagName + " " + flagKey)
-			for _, pattern := range sensitivePatterns {
-				if strings.Contains(combined, pattern) {
-					findings = append(findings, warn(
-						"flag-001", "Feature Flag With Security-Sensitive Name", catFlags,
-						models.Medium, 6.0,
-						"Security-critical flags controlling admin mode, debug mode, or auth bypass can be toggled to weaken security posture if misconfigured.",
-						fmt.Sprintf("Project '%s' has flag '%s' matching sensitive pattern '%s'.", projName, displayName, pattern),
-						"feature-flag", flagID, displayName,
-						"Review security-sensitive feature flags. Ensure they have proper access controls and monitoring.",
-						map[string]string{"project": projName, "matched_pattern": pattern},
-					))
-					break
-				}
+			// flag-001: Security-sensitive name check. Match whole name segments
+			// (split on -_./ ) rather than substrings, so a flag like
+			// "show-admin-contact-link" or "new-debugger-tab" is not flagged for
+			// merely containing "admin" or "debug".
+			matched := matchedSensitiveFlagWord(flagName, flagKey)
+			if matched != "" {
+				findings = append(findings, warn(
+					"flag-001", "Feature Flag With Security-Sensitive Name", catFlags,
+					models.Medium, 6.0,
+					"Security-critical flags controlling admin mode, debug mode, or auth bypass can be toggled to weaken security posture if misconfigured.",
+					fmt.Sprintf("Project '%s' has flag '%s' matching sensitive pattern '%s'.", projName, displayName, matched),
+					"feature-flag", flagID, displayName,
+					"Review security-sensitive feature flags. Ensure they have proper access controls and monitoring.",
+					map[string]string{"project": projName, "matched_pattern": matched},
+				))
 			}
 
 			// flag-002: Overrides in production
@@ -112,12 +133,17 @@ func (f *FeatureFlagChecks) Run(c *client.Client) []models.Finding {
 				}
 			}
 
-			if hasOverrides {
+			// flag-002: Overrides/rules on a SECURITY-SENSITIVE flag. Overrides and
+			// rules are the normal mechanism of every feature flag (targeting,
+			// gradual rollout), so their mere presence is not a finding. Only flag
+			// them when the flag's name is itself security-sensitive (flag-001
+			// matched), where a silent override could weaken security posture.
+			if hasOverrides && matched != "" {
 				findings = append(findings, warn(
-					"flag-002", "Feature Flag Overrides in Production", catFlags,
-					models.High, 7.0,
-					"Overrides can silently change application behavior in production, potentially disabling security features without deployment.",
-					fmt.Sprintf("Project '%s' flag '%s' has active overrides or rules that may affect production.", projName, displayName),
+					"flag-002", "Overrides on a Security-Sensitive Feature Flag", catFlags,
+					models.Medium, 5.0,
+					"Overrides can silently change application behavior in production. On a security-sensitive flag, an override could disable a protection without a deployment.",
+					fmt.Sprintf("Project '%s' security-sensitive flag '%s' has active overrides or rules that may affect production.", projName, displayName),
 					"feature-flag", flagID, displayName,
 					"Review production flag overrides. Ensure they are intentional and monitored.",
 					map[string]string{"project": projName},

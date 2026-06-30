@@ -156,21 +156,23 @@ func (ic *InfrastructureChecks) checkEdgeConfig(c *client.Client) []models.Findi
 			))
 		}
 
-		// Check: edge config name suggests sensitive content
-		ecName := ecSlug
-		sensitivePatterns := []string{"secret", "key", "token", "password", "credential", "auth", "api-key"}
-		for _, pattern := range sensitivePatterns {
-			if strings.Contains(strings.ToLower(ecName), pattern) {
-				findings = append(findings, warn(
-					"infra-041", "Edge Config May Contain Secrets", catInfra, models.High,
-					7.0, "Edge Config items are readable at the edge with a connection string. Secrets stored here bypass encryption-at-rest protections available for environment variables.",
-					fmt.Sprintf("Edge Config '%s' has a name suggesting it may contain sensitive data.", ecSlug),
-					"edge_config", ecID, ecSlug,
-					"Store secrets in encrypted environment variables, not Edge Config. Edge Config is designed for non-sensitive runtime configuration.",
-					nil,
-				))
-				break
-			}
+		// Check: edge config name suggests sensitive content. Match whole name
+		// segments (split on -_./), not substrings, so a slug like "monkey",
+		// "oauth-routes", or "author-bios" is not flagged for containing "key" or
+		// "auth". Plural forms are listed so "api-keys" / "auth-tokens" still match.
+		sensitiveWords := []string{
+			"secret", "secrets", "key", "keys", "token", "tokens",
+			"password", "passwords", "credential", "credentials", "auth",
+		}
+		if hasWholeSegment(ecSlug, sensitiveWords...) {
+			findings = append(findings, warn(
+				"infra-041", "Edge Config May Contain Secrets", catInfra, models.High,
+				7.0, "Edge Config items are readable at the edge with a connection string. Secrets stored here bypass encryption-at-rest protections available for environment variables.",
+				fmt.Sprintf("Edge Config '%s' has a name suggesting it may contain sensitive data.", ecSlug),
+				"edge_config", ecID, ecSlug,
+				"Store secrets in encrypted environment variables, not Edge Config. Edge Config is designed for non-sensitive runtime configuration.",
+				nil,
+			))
 		}
 
 		// Check: edge config item count (might contain sensitive data)
@@ -320,10 +322,16 @@ func (ic *InfrastructureChecks) checkStaticIPs(c *client.Client) []models.Findin
 			hasBackendURL := false
 			for _, env := range envVars {
 				key := str(env["key"])
-				upper := strings.ToUpper(key)
-				if strings.Contains(upper, "DATABASE_URL") || strings.Contains(upper, "DB_URL") ||
-					strings.Contains(upper, "REDIS_URL") || strings.Contains(upper, "API_URL") ||
-					strings.Contains(upper, "BACKEND_URL") {
+				// Client-exposed vars (NEXT_PUBLIC_/VITE_/etc.) point at public
+				// endpoints by design and never need egress IP allowlisting, so they
+				// must not imply a private backend connection.
+				if isClientExposedKey(key) {
+					continue
+				}
+				// Match on a delimiter boundary so NEXT_PUBLIC_API_URL is excluded
+				// above and a stray name like MY_API_URLS does not match, while the
+				// real binding DATABASE_URL / MYDB_DATABASE_URL still does.
+				if hasAnySegmentSuffix(key, "DATABASE_URL", "DB_URL", "REDIS_URL", "API_URL", "BACKEND_URL") {
 					hasBackendURL = true
 					break
 				}

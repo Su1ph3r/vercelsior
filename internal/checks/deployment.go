@@ -40,8 +40,12 @@ func (dc *DeploymentChecks) Run(c *client.Client) []models.Finding {
 		projID := str(p["id"])
 		projName := str(p["name"])
 
-		// Check: git fork protection
+		// Check: git fork protection. This only matters when the project has a
+		// connected Git repository: that is the only way a forked-repo PR can
+		// trigger a build. A project with no `link` (no connected repo) has no
+		// fork-PR attack surface, so flagging it produced a false HIGH.
 		gitForkProtection := p["gitForkProtection"]
+		hasGitRepo := mapVal(p["link"]) != nil
 		if boolean(gitForkProtection) {
 			// PASS - explicitly enabled
 			findings = append(findings, pass(
@@ -49,8 +53,8 @@ func (dc *DeploymentChecks) Run(c *client.Client) []models.Finding {
 				fmt.Sprintf("Project '%s' has git fork protection enabled.", projName),
 				"project", projID, projName,
 			))
-		} else {
-			// FAIL - either false or nil (not configured)
+		} else if hasGitRepo {
+			// FAIL - connected repo with fork protection off or not configured
 			f := fail(
 				"dep-001", "Git Fork Protection Disabled", catDeployment, models.High,
 				8.0, "Fork PRs can execute build-time code with access to production secrets. An attacker can submit a malicious fork to steal environment variables.",
