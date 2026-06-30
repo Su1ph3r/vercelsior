@@ -118,15 +118,19 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 				{"php", "PHP Injection"},
 				{"java", "Java Attacks"},
 			}
-			// Aggregate disabled OWASP categories into a single finding rather than
-			// emitting one High per category (which produced up to 11 findings per
-			// project). Only an explicit enabled:false is a confirmed-disabled
-			// category; a key missing from the response is "unknown" (block is the
-			// platform default), not a disabled protection, so it is not flagged.
-			var disabled []string
+			// Aggregate OWASP category status into at most two findings rather than
+			// emitting one High per category (which produced up to 11 per project).
+			// An explicit enabled:false is a confirmed-disabled category (High). A
+			// key missing from the response is "unconfirmed": block is the platform
+			// default, but we cannot prove it is enabled, so it is surfaced as a
+			// Low finding rather than silently dropped.
+			var disabled, unconfirmed []string
 			for _, cat := range owaspCategories {
 				rule := mapVal(crs[cat.key])
-				if rule != nil && !boolean(rule["enabled"]) {
+				switch {
+				case rule == nil:
+					unconfirmed = append(unconfirmed, cat.name)
+				case !boolean(rule["enabled"]):
 					disabled = append(disabled, cat.name)
 				}
 			}
@@ -138,6 +142,16 @@ func (fc *FirewallChecks) Run(c *client.Client) []models.Finding {
 					"project", projID, projName,
 					"Review the disabled OWASP CRS categories and enable those relevant to your application.",
 					map[string]string{"disabled_categories": strings.Join(disabled, ",")},
+				))
+			}
+			if len(unconfirmed) > 0 {
+				findings = append(findings, warn(
+					"fw-003-unconfirmed", "OWASP Core Rule Set Categories Not Reported", catFirewall, models.Low,
+					2.0, "These OWASP CRS categories were not present in the firewall configuration response, so their enabled state could not be confirmed. They are likely on by default, but verify them directly.",
+					fmt.Sprintf("Project '%s' has OWASP CRS categories whose status could not be confirmed: %s.", projName, strings.Join(unconfirmed, ", ")),
+					"project", projID, projName,
+					"Verify these OWASP CRS categories are enabled in the firewall configuration.",
+					map[string]string{"unconfirmed_categories": strings.Join(unconfirmed, ",")},
 				))
 			}
 

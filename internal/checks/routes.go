@@ -44,8 +44,17 @@ func isMetadataDestination(dest string) bool {
 	if ip == nil {
 		return false
 	}
+	// AWS IPv6 instance-metadata endpoint is a ULA (fd00:ec2::254), so it is not
+	// link-local; match it by value to cover every textual form (compressed or
+	// expanded). A proxy here is IMDS SSRF, not a benign internal proxy.
+	if ip.Equal(awsIMDSv6) {
+		return true
+	}
 	return ip.IsLinkLocalUnicast()
 }
+
+// awsIMDSv6 is AWS's IPv6 instance-metadata address (fd00:ec2::254).
+var awsIMDSv6 = net.ParseIP("fd00:ec2::254")
 
 // isPrivateDestination reports whether a destination points at a loopback or
 // RFC-1918/ULA private address. Such a destination in a static, operator-authored
@@ -64,10 +73,12 @@ func isPrivateDestination(dest string) bool {
 	if ip == nil {
 		return false
 	}
-	if ip.IsLinkLocalUnicast() { // reported by isMetadataDestination
+	if ip.IsLinkLocalUnicast() || ip.Equal(awsIMDSv6) { // reported by isMetadataDestination
 		return false
 	}
-	return ip.IsLoopback() || ip.IsPrivate()
+	// Unspecified (0.0.0.0 / ::) routes to local/all interfaces on the host and is
+	// neither loopback nor RFC-1918 by Go's classifiers, so include it explicitly.
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsUnspecified()
 }
 
 type RouteChecks struct{}

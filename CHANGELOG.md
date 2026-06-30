@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+### Changed: false-positive reduction
+
+Tightened heuristic detections that fired on benign-but-matching input. Name
+matching now uses word/segment boundaries instead of unanchored substrings
+(shared helpers in `internal/checks/matching.go`):
+
+- **sec-001** no longer flags public locators like `NEXTAUTH_URL` as plain-text
+  secrets; value-shape and an allowlist distinguish locators from credentials.
+- **sto-001/003** (takeover) match the real `vercel-dns.com` CNAME target and
+  honor wildcard/apex domain coverage, so legitimately-served subdomains and
+  unrelated hosts (e.g. `vercelstatus.com`) are no longer flagged.
+- **infra-040/041**, **stor-002**, **flag-001** match whole name segments, so
+  `monkey` / `oauth-routes` / `NEXT_PUBLIC_API_URL` no longer match.
+- **prev-003** stops flagging bare shell metacharacters in build commands;
+  it flags `eval` / `sh -c` and `curl | sh` instead.
+- **route-004** is now scoped to cloud-metadata destinations (SSRF to IMDS,
+  including AWS IMDSv6 `fd00:ec2::254`) on rewrites/proxies only; private and
+  loopback destinations move to the new low-severity **route-007**.
+- Severity recalibration: **iam-010** (SAML, an Enterprise feature) and
+  **dom-001** (unverified domain) downgraded to Low; **flag-002** scoped to
+  security-sensitive flags and downgraded to Medium; **fw-003** aggregates
+  per-category findings and reports unconfirmed (absent) categories as
+  low-severity **fw-003-unconfirmed**; **iam-014** and **dep-001** only fire on
+  a confirmed state (explicit policy `off`; a project with a connected Git repo).
+
+### Fixed
+
+- **dom-024** now detects DMARC records published under the absolute name
+  (`_dmarc.example.com`) or by `v=DMARC1` value, not only the relative `_dmarc`
+  name, so a present DMARC record is no longer reported as missing.
+- **stor-001/002** again detect the `POSTGRES_URL_NON_POOLING` storage binding
+  (and now `POSTGRES_PRISMA_URL` / `KV_REST_API_READ_ONLY_TOKEN`).
+
 ## v1.0.0 — 2026-05-31
 
 The trifecta release. Vercelsior becomes a three-mode Vercel security tool —

@@ -85,7 +85,7 @@ With the above setup, vercelsior should produce AT LEAST these findings:
 |----------|-------|--------|
 | iam-001 | Token Without Expiration | FAIL |
 | iam-005 | Token With Full Access Scope | WARN |
-| iam-010 | SSO/SAML Not Configured | FAIL |
+| iam-010 | SSO/SAML Not Configured | WARN |
 | fw-001 | Firewall Not Configured | FAIL |
 | sec-001 | Sensitive Env Var Stored as Plain Text | FAIL |
 | sec-002 | Sensitive Env Var Exposed to Non-Production | WARN |

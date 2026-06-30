@@ -13,6 +13,8 @@ func TestIsMetadataDestination(t *testing.T) {
 		{"AWS metadata IP", "http://169.254.169.254/latest/meta-data/", true},
 		{"Alibaba metadata", "http://100.100.100.200/", true},
 		{"link-local range", "http://169.254.1.1/", true},
+		{"AWS IMDSv6 compressed", "http://[fd00:ec2::254]/latest/meta-data/", true},
+		{"AWS IMDSv6 expanded", "http://[fd00:ec2:0:0:0:0:0:254]/", true},
 
 		// Private/loopback are NOT metadata.
 		{"localhost", "http://localhost/", false},
@@ -52,9 +54,14 @@ func TestIsPrivateDestination(t *testing.T) {
 		{"172.31.0.0/12 high", "http://172.31.255.255/", true},
 		{"192.168.0.0/16", "http://192.168.1.1/", true},
 
+		// Unspecified addresses (all-interfaces) route to local services.
+		{"ipv4 unspecified", "http://0.0.0.0:8080/", true},
+		{"ipv6 unspecified", "http://[::]/", true},
+
 		// Metadata/link-local is reported by isMetadataDestination, not here.
 		{"link-local", "http://169.254.1.1/", false},
 		{"gcp metadata host", "https://metadata.google.internal/", false},
+		{"aws imdsv6", "http://[fd00:ec2::254]/", false},
 
 		// Public and malformed.
 		{"public IP", "http://8.8.8.8/", false},
