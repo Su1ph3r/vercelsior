@@ -1,6 +1,11 @@
 # Changelog
 
-## Unreleased
+## v1.1.0 (2026-06-30)
+
+False-positive reduction release. No breaking changes: existing CheckIDs and the
+scan/probe/project invocations are unchanged; this run tightens heuristics, adds
+the `route-007` and `fw-003-unconfirmed` findings, and recalibrates several
+severities.
 
 ### Changed: false-positive reduction
 
