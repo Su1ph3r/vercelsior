@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+### Added: GitHub Actions cache-poisoning check (project mode)
+
+`vercelsior project` now scans `.github/workflows/*.yml` for cache-poisoning
+risk (CWE-494), since Vercel deploy previews are commonly built in CI:
+
+- **prj-gha-cache-poison** (WARN, MEDIUM) — an `actions/cache` step whose `key`
+  and `restore-keys` carry no integrity binding (neither a `hashFiles()` over a
+  lockfile nor a commit-SHA context such as `github.sha`). An entry poisoned
+  from a lower-trust context (fork PR, feature branch) persists into later
+  builds, including deploy previews.
+- **prj-gha-cache-restore-keys** (WARN, LOW) — a bound `key` paired with an
+  unbound `restore-keys` prefix, which reopens the fallback path on a key miss.
+
+The parser tolerates quoted `uses:` values, skips commented-out steps, caps
+per-file scan size, and surfaces an ERROR (never a false all-clear) when a
+cache step cannot be fully parsed.
+
+No new dependencies: workflows are parsed with a stdlib indentation-aware
+scanner, preserving the zero-dependency single-binary build. No breaking
+changes; existing CheckIDs and invocations are unchanged.
+
 ## v1.1.0 (2026-06-30)
 
 False-positive reduction release. No breaking changes: existing CheckIDs and the

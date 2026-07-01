@@ -11,6 +11,8 @@
 //   - next.config: productionBrowserSourceMaps, ignoreBuildErrors/ignoreDuringBuilds
 //   - vercel.json: redirects/rewrites to external destinations; missing
 //     security headers
+//   - .github/workflows/*: actions/cache steps whose key/restore-keys are not
+//     bound to a lockfile hash (GitHub Actions cache poisoning, CWE-494)
 package project
 
 import (
@@ -27,10 +29,11 @@ import (
 )
 
 const (
-	catFramework = "Framework Security"
-	catSecrets   = "Secrets & Environment"
-	catConfig    = "Project Configuration"
-	catRouting   = "Routes & Redirects"
+	catFramework   = "Framework Security"
+	catSecrets     = "Secrets & Environment"
+	catConfig      = "Project Configuration"
+	catRouting     = "Routes & Redirects"
+	catSupplyChain = "Supply Chain"
 )
 
 var envFileNames = []string{
@@ -81,11 +84,12 @@ func Run(fsys fs.FS, displayPath, scanID string) *models.ScanResult {
 	result.Findings = append(result.Findings, checkEnvFiles(fsys, gitignored)...)
 	result.Findings = append(result.Findings, checkNextConfig(fsys)...)
 	result.Findings = append(result.Findings, checkVercelJSON(fsys)...)
+	result.Findings = append(result.Findings, checkWorkflows(fsys)...)
 
 	if len(result.Findings) == 0 {
 		result.Findings = append(result.Findings, passFinding("prj-scope",
 			"No recognizable Vercel project files found", catConfig,
-			"None of vercel.json, next.config.*, package.json, or .env* were found at the target path. Point project mode at a project root.",
+			"None of vercel.json, next.config.*, package.json, .env*, or .github/workflows/* were found at the target path. Point project mode at a project root.",
 			displayPath))
 	}
 

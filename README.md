@@ -23,7 +23,7 @@ Vercelsior tests Vercel security from three angles, each its own subcommand:
 |---------|-------|-------------|--------|
 | `vercelsior scan` | API token | **CSPM** — audit account/team/project config from the inside | ✅ Available |
 | `vercelsior probe <url>` | a URL | **DAST** — black-box test a deployed site (CVE-2025-29927 middleware bypass, source maps, header hygiene) from the outside, no token | ✅ Available |
-| `vercelsior project [path]` | local repo | **IaC/SAST** — scan `vercel.json`, `next.config.*`, `package.json`, `.env*` pre-deploy, no token | ✅ Available |
+| `vercelsior project [path]` | local repo | **IaC/SAST** — scan `vercel.json`, `next.config.*`, `package.json`, `.env*`, `.github/workflows/*` pre-deploy, no token | ✅ Available |
 
 Running `vercelsior` with no subcommand (or with a leading flag, e.g. `vercelsior --token ...`) is an alias for `vercelsior scan`, so existing usage and CI pipelines are unaffected. Together the three modes test Vercel security from the **inside** (token), the **repo** (pre-deploy), and the **outside** (deployed URL) — the only tool that does all three.
 
@@ -36,7 +36,7 @@ vercelsior project ./my-app
 vercelsior project . -f sarif -o ./results   # GitHub code scanning on PRs
 ```
 
-Checks: **Next.js CVE** matrix against the `next` version in `package.json` (incl. CVE-2025-29927), **committed/client-exposed secrets** in `.env*` (hardcoded values, `NEXT_PUBLIC_`/`VITE_`/etc. leakage, `.gitignore` coverage), risky **`next.config.*`** flags (`productionBrowserSourceMaps`, `ignoreBuildErrors`, `ignoreDuringBuilds`, `poweredByHeader`), and **`vercel.json`** issues (external redirects/rewrites, missing security headers).
+Checks: **Next.js CVE** matrix against the `next` version in `package.json` (incl. CVE-2025-29927), **committed/client-exposed secrets** in `.env*` (hardcoded values, `NEXT_PUBLIC_`/`VITE_`/etc. leakage, `.gitignore` coverage), risky **`next.config.*`** flags (`productionBrowserSourceMaps`, `ignoreBuildErrors`, `ignoreDuringBuilds`, `poweredByHeader`), **`vercel.json`** issues (external redirects/rewrites, missing security headers), and **GitHub Actions cache poisoning** in `.github/workflows/*` (`actions/cache` keys not bound to a lockfile hash, CWE-494).
 
 ### Probe mode (black-box DAST)
 
